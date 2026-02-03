@@ -18,6 +18,7 @@ import {
   TcpFlowProtocol,
   UdpSendMessage,
 } from "./network-stack";
+import type { SandboxPolicy } from "./policy";
 
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
@@ -122,6 +123,7 @@ export type QemuNetworkOptions = {
   debug?: boolean;
   httpHooks?: HttpHooks;
   mitmCertDir?: string;
+  policy?: SandboxPolicy;
 };
 
 export class QemuNetworkBackend extends EventEmitter {
@@ -134,9 +136,11 @@ export class QemuNetworkBackend extends EventEmitter {
   private caCertPath: string | null = null;
   private caKeyPath: string | null = null;
   private tlsContexts = new Map<string, tls.SecureContext>();
+  private policy: SandboxPolicy | null = null;
 
   constructor(private readonly options: QemuNetworkOptions) {
     super();
+    this.policy = options.policy ?? null;
   }
 
   start() {
@@ -158,6 +162,15 @@ export class QemuNetworkBackend extends EventEmitter {
       this.server.close();
       this.server = null;
     }
+  }
+
+  setPolicy(policy: SandboxPolicy | null) {
+    this.policy = policy;
+    this.emit("policy", policy);
+  }
+
+  getPolicy() {
+    return this.policy;
   }
 
   private attachSocket(socket: net.Socket) {
@@ -696,7 +709,7 @@ export class QemuNetworkBackend extends EventEmitter {
     const response = await fetch(hookRequest.url, {
       method: hookRequest.method,
       headers: hookRequest.headers,
-      body: hookRequest.body ?? undefined,
+      body: hookRequest.body ? new Uint8Array(hookRequest.body) : undefined,
     });
 
     if (this.options.debug) {

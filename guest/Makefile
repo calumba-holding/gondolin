@@ -1,7 +1,9 @@
-.PHONY: build test clean run image kernel qemu
+.PHONY: build test clean run image kernel qemu lint typecheck format
 
 ZIG ?= zig
 OPTIMIZE ?= ReleaseSmall
+
+ZIG_SOURCES := $(shell find src -name '*.zig') build.zig
 
 IMAGE_SCRIPT ?= ./image/build.sh
 IMAGE_OUT ?= ./image/out
@@ -100,6 +102,15 @@ qemu: image kernel
 		-chardev socket,id=virtiocon0,path=$(VIRTIO_SOCK),server=on,wait=$(QEMU_WAIT) \
 		-device virtio-serial-pci \
 		-device virtserialport,chardev=virtiocon0,name=virtio-port
+
+format:
+	$(ZIG) fmt $(ZIG_SOURCES)
+
+lint:
+	$(ZIG) fmt --check $(ZIG_SOURCES)
+
+typecheck: build
+
 
 test:
 	$(ZIG) build test -Doptimize=$(OPTIMIZE)

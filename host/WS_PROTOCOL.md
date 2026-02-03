@@ -41,6 +41,17 @@ The host controller exposes a WebSocket API for streaming exec requests to the s
 }
 ```
 
+#### `policy`
+```json
+{
+  "type": "policy",
+  "policy": {
+    "http": { "allow": ["icanhazip.com"] },
+    "dns": { "allow": ["icanhazip.com"] }
+  }
+}
+```
+
 ### Server → Client
 
 #### `status`

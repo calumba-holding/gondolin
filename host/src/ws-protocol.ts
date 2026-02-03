@@ -1,3 +1,7 @@
+import type { SandboxPolicy } from "./policy";
+
+export type { SandboxPolicy, SandboxPolicyRule } from "./policy";
+
 export type ExecCommandMessage = {
   type: "exec";
   id: number;
@@ -21,10 +25,16 @@ export type LifecycleCommandMessage = {
   action: "restart" | "shutdown";
 };
 
+export type PolicyCommandMessage = {
+  type: "policy";
+  policy: SandboxPolicy;
+};
+
 export type ClientMessage =
   | ExecCommandMessage
   | StdinCommandMessage
-  | LifecycleCommandMessage;
+  | LifecycleCommandMessage
+  | PolicyCommandMessage;
 
 export type ExecResponseMessage = {
   type: "exec_response";

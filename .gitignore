@@ -1,3 +1,4 @@
+.husky/_
 .pi/todos
 tmp/
 zig-cache/
