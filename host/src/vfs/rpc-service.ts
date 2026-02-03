@@ -1,4 +1,3 @@
-import fs from "fs";
 import os from "os";
 import path from "path";
 
@@ -19,6 +18,15 @@ const DT_LNK = 10;
 
 export const MAX_RPC_DATA = 60 * 1024;
 
+const LINUX_OPEN_FLAGS = {
+  O_RDONLY: 0,
+  O_WRONLY: 1,
+  O_RDWR: 2,
+  O_CREAT: 0x40,
+  O_TRUNC: 0x200,
+  O_APPEND: 0x400,
+};
+
 export type FsRpcMetrics = {
   requests: number;
   errors: number;
@@ -35,6 +43,7 @@ type HandleEntry = {
   handle: VfsBackendHandle;
   ino: number;
   path: string;
+  append: boolean;
 };
 
 export class FsRpcService {
@@ -206,12 +215,12 @@ export class FsRpcService {
     const ino = requireUint(req.ino, "open", "ino");
     const flags = requireUint(req.flags, "open", "flags");
     const entryPath = this.requirePath(ino, "open");
-    const { openFlags, truncate } = parseOpenFlagsForOpen(flags);
+    const { openFlags, truncate, append } = parseOpenFlagsForOpen(flags);
     const handle = await this.provider.open(entryPath, openFlags);
     if (truncate) {
       await this.provider.truncate(entryPath, 0);
     }
-    const fh = this.allocateHandle(handle, ino, entryPath);
+    const fh = this.allocateHandle(handle, ino, entryPath, append);
     return { fh, open_flags: 0 };
   }
 
@@ -238,7 +247,8 @@ export class FsRpcService {
       throw createErrnoError(ERRNO.EINVAL, "write");
     }
     const handle = this.getHandle(fh, "write");
-    const { bytesWritten } = await handle.handle.write(data, 0, data.length, offset);
+    const position = handle.append ? null : offset;
+    const { bytesWritten } = await handle.handle.write(data, 0, data.length, position);
     this.metrics.bytesWritten += bytesWritten;
     return { size: bytesWritten };
   }
@@ -252,10 +262,11 @@ export class FsRpcService {
 
     const parentPath = this.requirePath(parentIno, "create");
     const entryPath = normalizePath(path.posix.join(parentPath, name));
+    const append = (flags & LINUX_OPEN_FLAGS.O_APPEND) !== 0;
     const handle = await this.provider.open(entryPath, openFlagsToString(flags, true), mode);
     const stats = await handle.stat();
     const ino = this.ensureIno(entryPath);
-    const fh = this.allocateHandle(handle, ino, entryPath);
+    const fh = this.allocateHandle(handle, ino, entryPath, append);
 
     return {
       entry: {
@@ -376,9 +387,14 @@ export class FsRpcService {
     return entryPath;
   }
 
-  private allocateHandle(handle: VfsBackendHandle, ino: number, entryPath: string) {
+  private allocateHandle(
+    handle: VfsBackendHandle,
+    ino: number,
+    entryPath: string,
+    append: boolean
+  ) {
     const fh = this.nextHandle++;
-    this.handles.set(fh, { handle, ino, path: entryPath });
+    this.handles.set(fh, { handle, ino, path: entryPath, append });
     return fh;
   }
 
@@ -480,7 +496,7 @@ function statsToAttr(ino: number, stats: VfsStats) {
 }
 
 function openFlagsToString(flags: number, forceCreate: boolean) {
-  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } = fs.constants;
+  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } = LINUX_OPEN_FLAGS;
   const access = flags & (O_RDONLY | O_WRONLY | O_RDWR);
   const append = (flags & O_APPEND) !== 0;
   const trunc = (flags & O_TRUNC) !== 0;
@@ -500,14 +516,23 @@ function openFlagsToString(flags: number, forceCreate: boolean) {
 }
 
 function parseOpenFlagsForOpen(flags: number) {
-  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC } = fs.constants;
+  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } = LINUX_OPEN_FLAGS;
   if ((flags & O_CREAT) !== 0) {
     throw createErrnoError(ERRNO.EINVAL, "open");
   }
   const truncate = (flags & O_TRUNC) !== 0;
   const access = flags & (O_RDONLY | O_WRONLY | O_RDWR);
-  const openFlags = access === O_RDWR || access === O_WRONLY ? "r+" : "r";
-  return { openFlags, truncate };
+  const append = (flags & O_APPEND) !== 0;
+
+  let openFlags: string;
+  const appendEnabled = append && access !== O_RDONLY;
+  if (appendEnabled) {
+    openFlags = access === O_RDWR ? "a+" : "a";
+  } else {
+    openFlags = access === O_RDWR || access === O_WRONLY ? "r+" : "r";
+  }
+
+  return { openFlags, truncate, append: appendEnabled };
 }
 
 async function direntType(entry: string | VfsDirent, entryPath: string, provider: SandboxVfsProvider) {

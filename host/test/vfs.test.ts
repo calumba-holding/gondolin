@@ -72,6 +72,17 @@ test("vfs roundtrip between host and guest", { timeout: timeoutMs, skip: Boolean
         `write failed (exit ${write.exitCode}): ${write.stderr.toString().trim()}`
       );
     }
+
+    const append = await withTimeout(
+      vm.exec(["sh", "-c", "printf foo > /data/append.txt; printf bar >> /data/append.txt; cat /data/append.txt"]),
+      timeoutMs
+    );
+    if (append.exitCode !== 0) {
+      throw new Error(
+        `append failed (exit ${append.exitCode}): ${append.stderr.toString().trim()}`
+      );
+    }
+    assert.equal(append.stdout.toString(), "foobar");
   } finally {
     await vm.stop();
   }

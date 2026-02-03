@@ -511,7 +511,25 @@ const SandboxFs = struct {
             return;
         }
 
-        try sendResponse(self.fuse_fd, header.unique, 0, &.{});
+        var attr_fields = [_]fs_rpc.Field{.{ .name = "ino", .value = .{ .UInt = header.nodeid } }};
+        var attr_response = try self.rpc.?.request("getattr", &attr_fields);
+        defer attr_response.deinit();
+
+        if (attr_response.err != 0) {
+            try sendError(self.fuse_fd, header.unique, errnoFromResponse(attr_response.err));
+            return;
+        }
+
+        const res_map = attr_response.res orelse return error.InvalidResponse;
+        const attr_val = cbor.getMapValue(res_map, "attr") orelse return error.InvalidResponse;
+        const attr_map = try expectMap(attr_val);
+        const attr = try parseAttr(attr_map, header.nodeid);
+        const attr_ttl_ms = getMapU64(res_map, "attr_ttl_ms") orelse DefaultTtls.attr_ms;
+
+        try self.inode_cache.put(attr.ino, .{ .attr = attr, .kind = attr.mode & 0xf000 });
+
+        const out = buildAttrOut(attr, attr_ttl_ms);
+        try sendResponse(self.fuse_fd, header.unique, 0, std.mem.asBytes(&out));
     }
 
     fn handleMkdir(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
