@@ -1,50 +1,39 @@
 # Eregion Sandbox
 
-This repo is a proof-of-concept for running a tiny Alpine guest in QEMU, driving
-it via a virtio-serial RPC, and exposing a host WebSocket API for exec requests.
+This repo implements a proof-of-concept for the agent sandbox.  It focuses on a
+QEMU-based micro-VM with a tiny guest supervisor, a virtio-serial RPC, and a
+host control plane that enforces filesystem and network policy.
+
+## Motivation
+
+Elwing's current Pyodide/WASM sandbox is not a sufficient security boundary on
+servers because Python can escape through the surrounding JavaScript realm if
+objects from other realms are passed to it, which is tricky to prevent.  The RFC
+calls for isolating untrusted code by running a full Unix guest with strong
+host-level isolation, while preserving a fast and developer-friendly workflow.
+
+Key motivations from the RFC:
+
+- Strong isolation between tenants to prevent cross-account access.
+- Guard network and filesystem access with explicit policy.
+- Fast create/exec/teardown for LLM workflows.
+- Development parity between macOS and production Linux.
+
+## Design
+
+- **Guest (Alpine):** a minimal init boots, mounts a tiny root, brings up a
+  `sandboxd` supervisor, and later (post-POC) runs a FUSE filesystem for `/data`
+  and other virtual mounts.
+- **Host controller:** launches QEMU, owns lifecycle, and exposes a stable API
+  for `exec`, filesystem RPC, and optional network proxying.
+- **Transport:** a length-prefixed, CBOR-encoded protocol over **virtio-serial**
+- **Networking:** host-controlled transparent proxy with allow/deny policies and
+  HTTPS MITM.
+- **Dev/prod parity:** identical guest image + RPC; only QEMU accel flags vary
+  (HVF on macOS, KVM on Linux).
 
 ## Repository layout
 
 - `guest/` — Zig-based `sandboxd` daemon, Alpine initramfs build, and QEMU helpers.
-  - `guest/src/` contains the virtio-serial RPC implementation and exec handling.
-  - `guest/image/` builds an Alpine minirootfs + init script into an initramfs.
-  - `guest/Makefile` provides `build`, `image`, `kernel`, and `qemu` targets.
 - `host/` — TypeScript host controller + WebSocket server.
-  - `host/src/sandbox-ws-server.ts` manages QEMU lifecycle and bridges WebSocket exec requests to virtio-serial.
-  - `host/bin/eregion.ts` is the CLI (exec + ws-server subcommands).
-  - `host/src/virtio-protocol.ts` and `host/src/ws-protocol.ts` define encoding/framing.
-  - `host/WS_PROTOCOL.md` documents the WebSocket protocol.
-- `plans/` — POC planning docs.
-  - `plans/POC_PLAN.md` is the source of truth for the current phase.
-  - `plans/POC_PROTOCOL.md` defines the CBOR-based virtio framing.
-  - `plans/FOLLOWUP_PLAN.md` captures post-POC milestones.
-
-## Current state (February 2026)
-
-- **Guest daemon (`sandboxd`)**
-  - Zig binary that listens on `/dev/vport0p0`/`/dev/vport0p1` (virtio-serial).
-  - Handles `exec_request` frames, spawns processes, streams stdout/stderr, and returns exit code.
-  - Supports stdin streaming and optional PTY allocation (see protocol fields).
-- **Guest image**
-  - `guest/image/build.sh` assembles an Alpine minirootfs, installs extra packages, and produces `initramfs.cpio.gz`.
-  - `guest/image/init` mounts `/proc`, `/sys`, `/dev`, loads virtio modules, brings up `eth0`, and runs DHCP.
-  - `guest/image/out/` contains the generated initramfs and downloaded kernel artifacts.
-- **Host controller**
-  - `host/src/sandbox-ws-server.ts` starts QEMU, exposes a WebSocket API, and bridges exec messages to virtio.
-  - Automatic restart logic and state notifications are implemented in `SandboxController`.
-  - `host/bin/eregion.ts exec` can send direct exec requests over the virtio socket for quick testing.
-- **Host networking (new)**
-  - QEMU is launched with a virtio-net device backed by a host Unix socket.
-  - A TypeScript network stack (`host/src/network-stack.ts`) handles Ethernet/ARP/IPv4/TCP/UDP/DHCP.
-  - TCP/UDP traffic is NATed via Node sockets, and DNS works via UDP.
-  - `pnpm run test:ws` now checks HTTP + HTTPS requests against icanhazip.com.
-
-## Useful entry points
-
-- POC plan: `plans/POC_PLAN.md`
-- Virtio RPC protocol: `plans/POC_PROTOCOL.md`
-- WebSocket protocol: `host/WS_PROTOCOL.md`
-
-## What’s next
-
-The next POC step is to add TLS MITM/re-encryption and a host-controlled firewall that only allows HTTP/HTTPS/WebSocket traffic. See `plans/POC_PLAN.md` and the TODOs for TLS MITM + network policy.
+- `plans/` — POC plan, protocol draft, and follow-up roadmap.
