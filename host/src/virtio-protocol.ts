@@ -32,7 +32,29 @@ export type ErrorResponse = {
   };
 };
 
-export type IncomingMessage = ExecOutput | ExecResponse | ErrorResponse;
+export type FsRequest = {
+  v: number;
+  t: "fs_request";
+  id: number;
+  p: {
+    op: string;
+    req: Record<string, unknown>;
+  };
+};
+
+export type FsResponse = {
+  v: number;
+  t: "fs_response";
+  id: number;
+  p: {
+    op: string;
+    err: number;
+    res?: Record<string, unknown>;
+    message?: string;
+  };
+};
+
+export type IncomingMessage = ExecOutput | ExecResponse | ErrorResponse | FsResponse;
 
 export type ExecRequest = {
   v: number;
