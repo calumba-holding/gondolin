@@ -1,41 +1,71 @@
 #!/bin/sh
 set -eu
 
-mount -t proc proc /proc || echo "[init] mount proc failed" > /dev/console
-mount -t sysfs sysfs /sys || echo "[init] mount sysfs failed" > /dev/console
-mount -t devtmpfs devtmpfs /dev || echo "[init] mount devtmpfs failed" > /dev/console
+CONSOLE="/dev/console"
+if [ ! -c "${CONSOLE}" ]; then
+  if [ -c /dev/ttyAMA0 ]; then
+    CONSOLE="/dev/ttyAMA0"
+  elif [ -c /dev/ttyS0 ]; then
+    CONSOLE="/dev/ttyS0"
+  else
+    CONSOLE=""
+  fi
+fi
+
+log() {
+  if [ -n "${CONSOLE}" ]; then
+    printf "%s\n" "$*" > "${CONSOLE}" 2>/dev/null || printf "%s\n" "$*"
+  else
+    printf "%s\n" "$*"
+  fi
+}
+
+log_cmd() {
+  if [ -n "${CONSOLE}" ]; then
+    "$@" > "${CONSOLE}" 2>&1 || "$@" || true
+  else
+    "$@" || true
+  fi
+}
+
+mount -t proc proc /proc || log "[init] mount proc failed"
+mount -t sysfs sysfs /sys || log "[init] mount sysfs failed"
+mount -t devtmpfs devtmpfs /dev || log "[init] mount devtmpfs failed"
 
 mkdir -p /dev/pts /dev/shm /run
-mount -t devpts devpts /dev/pts || echo "[init] mount devpts failed" > /dev/console
-mount -t tmpfs tmpfs /run || echo "[init] mount tmpfs failed" > /dev/console
+mount -t devpts devpts /dev/pts || log "[init] mount devpts failed"
+mount -t tmpfs tmpfs /run || log "[init] mount tmpfs failed"
 
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
-echo "[init] /dev entries:" > /dev/console
-ls -l /dev > /dev/console 2>&1
+log "[init] /dev entries:"
+log_cmd ls -l /dev
 if [ -d /dev/virtio-ports ]; then
-  echo "[init] /dev/virtio-ports:" > /dev/console
-  ls -l /dev/virtio-ports > /dev/console 2>&1
+  log "[init] /dev/virtio-ports:"
+  log_cmd ls -l /dev/virtio-ports
 else
-  echo "[init] /dev/virtio-ports missing" > /dev/console
+  log "[init] /dev/virtio-ports missing"
 fi
 if [ -d /sys/class/virtio-ports ]; then
-  echo "[init] /sys/class/virtio-ports:" > /dev/console
-  ls -l /sys/class/virtio-ports > /dev/console 2>&1
+  log "[init] /sys/class/virtio-ports:"
+  log_cmd ls -l /sys/class/virtio-ports
 else
-  echo "[init] /sys/class/virtio-ports missing" > /dev/console
+  log "[init] /sys/class/virtio-ports missing"
 fi
 
-if modprobe virtio_rng > /dev/console 2>&1; then
-  echo "[init] loaded virtio_rng" > /dev/console
+if modprobe virtio_console > /dev/null 2>&1; then
+  log "[init] loaded virtio_console"
+fi
+if modprobe virtio_rng > /dev/null 2>&1; then
+  log "[init] loaded virtio_rng"
 fi
 if [ -e /dev/hwrng ]; then
-  echo "[init] starting rngd" > /dev/console
-  rngd -r /dev/hwrng -o /dev/random > /dev/console 2>&1 &
+  log "[init] starting rngd"
+  rngd -r /dev/hwrng -o /dev/random > /dev/null 2>&1 &
 else
-  echo "[init] /dev/hwrng missing" > /dev/console
+  log "[init] /dev/hwrng missing"
 fi
 
-echo "[init] starting sandboxd" > /dev/console
+log "[init] starting sandboxd"
 
 exec /usr/bin/sandboxd

@@ -8,7 +8,17 @@ IMAGE_DIR="${GUEST_DIR}/image"
 
 ALPINE_VERSION=${ALPINE_VERSION:-3.20.3}
 ALPINE_BRANCH=${ALPINE_BRANCH:-v3.20}
-ARCH=${ARCH:-x86_64}
+ARCH=${ARCH:-$(uname -m)}
+if [[ "${ARCH}" == "x86_64" && "$(uname -s)" == "Darwin" ]]; then
+    if sysctl -n hw.optional.arm64 >/dev/null 2>&1; then
+        if [[ "$(sysctl -n hw.optional.arm64)" == "1" ]]; then
+            ARCH="aarch64"
+        fi
+    fi
+fi
+if [[ "${ARCH}" == "arm64" ]]; then
+    ARCH="aarch64"
+fi
 
 OUT_DIR=${OUT_DIR:-"${IMAGE_DIR}/out"}
 ROOTFS_DIR="${OUT_DIR}/rootfs"
@@ -111,7 +121,7 @@ def parse_index(index_path: str, repo: str) -> None:
 
 for repo in repos:
     safe = safe_name(repo)
-    index_path = os.path.join(cache_dir, f"APKINDEX-{safe}")
+    index_path = os.path.join(cache_dir, f"APKINDEX-{safe}-{arch}")
     if not os.path.exists(index_path):
         tar_path = index_path + ".tar.gz"
         url = f"{repo}/{arch}/APKINDEX.tar.gz"
@@ -159,7 +169,7 @@ for pkg_name in needed:
     repo = pkg_repo[pkg_name]
     version = meta["V"]
     apk_name = f"{pkg_name}-{version}.apk"
-    apk_path = os.path.join(cache_dir, apk_name)
+    apk_path = os.path.join(cache_dir, f"{arch}-{apk_name}")
     if not os.path.exists(apk_path):
         url = f"{repo}/{arch}/{apk_name}"
         download(url, apk_path)

@@ -8,13 +8,42 @@ IMAGE_OUT ?= ./image/out
 IMAGE_INITRAMFS ?= $(IMAGE_OUT)/initramfs.cpio.gz
 
 ALPINE_BRANCH ?= v3.20
-ALPINE_ARCH ?= x86_64
 ALPINE_MIRROR ?= https://dl-cdn.alpinelinux.org/alpine
 KERNEL_PKG ?= linux-virt
 KERNEL ?= $(IMAGE_OUT)/vmlinuz-virt
 
-QEMU ?= qemu-system-x86_64
+HOST_ARCH := $(shell uname -m)
+HOST_OS := $(shell uname -s)
+ifeq ($(HOST_OS),Darwin)
+  ifeq ($(HOST_ARCH),x86_64)
+    ifeq ($(shell sysctl -n hw.optional.arm64 2>/dev/null),1)
+      HOST_ARCH := arm64
+    endif
+  endif
+endif
+
+ifeq ($(HOST_ARCH),arm64)
+DEFAULT_ARCH := aarch64
+DEFAULT_QEMU := qemu-system-aarch64
+else ifeq ($(HOST_ARCH),aarch64)
+DEFAULT_ARCH := aarch64
+DEFAULT_QEMU := qemu-system-aarch64
+else
+DEFAULT_ARCH := x86_64
+DEFAULT_QEMU := qemu-system-x86_64
+endif
+
+ALPINE_ARCH ?= $(DEFAULT_ARCH)
+QEMU ?= $(DEFAULT_QEMU)
+QEMU_MACHINE ?=
+ifeq ($(ALPINE_ARCH),aarch64)
+QEMU_MACHINE ?= -machine virt
+endif
+
 QEMU_MEMORY ?= 256M
+ifeq ($(ALPINE_ARCH),aarch64)
+QEMU_MEMORY ?= 512M
+endif
 QEMU_SMP ?= 1
 QEMU_SERIAL ?= stdio
 QEMU_WAIT ?= on
@@ -27,7 +56,7 @@ run: build
 	./zig-out/bin/sandboxd
 
 image: build
-	$(IMAGE_SCRIPT)
+	ARCH=$(ALPINE_ARCH) $(IMAGE_SCRIPT)
 
 kernel:
 	@set -e; \
@@ -58,7 +87,7 @@ kernel:
 
 qemu: image kernel
 	@rm -f $(VIRTIO_SOCK)
-	$(QEMU) \
+	$(QEMU) $(QEMU_MACHINE) \
 		-nodefaults -no-reboot -m $(QEMU_MEMORY) -smp $(QEMU_SMP) \
 		-kernel $(KERNEL) \
 		-initrd $(IMAGE_INITRAMFS) \

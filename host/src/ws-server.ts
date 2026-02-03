@@ -1,6 +1,7 @@
 import fs from "fs";
 import net from "net";
 import path from "path";
+import { execSync } from "child_process";
 
 import { WebSocketServer, WebSocket } from "ws";
 
@@ -39,19 +40,40 @@ type Args = {
   autoRestart: boolean;
 };
 
+function detectHostArch(): string {
+  if (process.arch === "arm64") return "arm64";
+  if (process.platform === "darwin" && process.arch === "x64") {
+    try {
+      const result = execSync("sysctl -n hw.optional.arm64", {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+      if (result === "1") return "arm64";
+    } catch {
+      // ignore
+    }
+  }
+  return process.arch;
+}
+
 function parseArgs(argv: string[]): Args {
   const repoRoot = path.resolve(__dirname, "../..");
   const defaultKernel = path.resolve(repoRoot, "guest/image/out/vmlinuz-virt");
   const defaultInitrd = path.resolve(repoRoot, "guest/image/out/initramfs.cpio.gz");
   const defaultVirtio = path.resolve(repoRoot, "tmp/virtio.sock");
 
+  const hostArch = detectHostArch();
+  const defaultQemu = hostArch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64";
+  const defaultMemory = hostArch === "arm64" ? "512M" : "256M";
+
   const args: Args = {
     host: "127.0.0.1",
     port: 8080,
-    qemuPath: "qemu-system-x86_64",
+    qemuPath: defaultQemu,
     kernelPath: defaultKernel,
     initrdPath: defaultInitrd,
-    memory: "256M",
+    memory: defaultMemory,
     cpus: 1,
     virtioSocketPath: defaultVirtio,
     autoRestart: true,
@@ -65,6 +87,9 @@ function parseArgs(argv: string[]): Args {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
+    if (arg === "--") {
+      continue;
+    }
     switch (arg) {
       case "--host":
         args.host = argv[++i] ?? args.host;
@@ -143,6 +168,7 @@ function usage() {
 
 class VirtioBridge {
   private socket: net.Socket | null = null;
+  private server: net.Server | null = null;
   private readonly reader = new FrameReader();
   private reconnectTimer: NodeJS.Timeout | null = null;
   private pending: Buffer[] = [];
@@ -155,38 +181,28 @@ class VirtioBridge {
   ) {}
 
   connect() {
-    if (this.socket) return;
+    if (this.server) return;
     if (!fs.existsSync(path.dirname(this.socketPath))) {
       fs.mkdirSync(path.dirname(this.socketPath), { recursive: true });
     }
+    fs.rmSync(this.socketPath, { force: true });
 
-    const socket = net.createConnection({ path: this.socketPath });
-    this.socket = socket;
-    this.waitingDrain = false;
+    const server = net.createServer((socket) => {
+      this.attachSocket(socket);
+    });
+    this.server = server;
 
-    socket.on("connect", () => {
-      this.flushPending();
+    server.on("error", (err) => {
+      this.onError?.(err);
+      server.close();
     });
 
-    socket.on("data", (chunk) => {
-      this.reader.push(chunk, (frame) => {
-        try {
-          const message = decodeMessage(frame) as IncomingMessage;
-          this.onMessage?.(message);
-        } catch (err) {
-          this.onError?.(err);
-          this.handleDisconnect();
-        }
-      });
+    server.on("close", () => {
+      this.server = null;
+      this.scheduleReconnect();
     });
 
-    socket.on("error", () => {
-      this.handleDisconnect();
-    });
-
-    socket.on("end", () => {
-      this.handleDisconnect();
-    });
+    server.listen(this.socketPath);
   }
 
   disconnect() {
@@ -194,10 +210,17 @@ class VirtioBridge {
       this.socket.end();
       this.socket = null;
     }
+    if (this.server) {
+      this.server.close();
+      this.server = null;
+    }
     this.waitingDrain = false;
   }
 
   send(message: object): boolean {
+    if (!this.socket) {
+      this.connect();
+    }
     const frame = encodeFrame(message);
     if (this.pending.length === 0 && !this.waitingDrain) {
       return this.writeFrame(frame);
@@ -246,12 +269,50 @@ class VirtioBridge {
     }
   }
 
+  private attachSocket(socket: net.Socket) {
+    if (this.socket) {
+      this.socket.destroy();
+    }
+    this.socket = socket;
+    this.waitingDrain = false;
+
+    socket.on("data", (chunk) => {
+      this.reader.push(chunk, (frame) => {
+        try {
+          const message = decodeMessage(frame) as IncomingMessage;
+          this.onMessage?.(message);
+        } catch (err) {
+          this.onError?.(err);
+          this.handleDisconnect();
+        }
+      });
+    });
+
+    socket.on("error", (err) => {
+      this.onError?.(err);
+      this.handleDisconnect();
+    });
+
+    socket.on("end", () => {
+      this.handleDisconnect();
+    });
+
+    socket.on("close", () => {
+      this.handleDisconnect();
+    });
+
+    this.flushPending();
+  }
+
   private handleDisconnect() {
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
     }
     this.waitingDrain = false;
+  }
+
+  private scheduleReconnect() {
     if (this.reconnectTimer) return;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
@@ -259,6 +320,7 @@ class VirtioBridge {
     }, 500);
   }
 }
+
 
 const MAX_REQUEST_ID = 0xffffffff;
 const MAX_JSON_BYTES = 256 * 1024;
@@ -316,6 +378,9 @@ function main() {
   const args = parseArgs(process.argv.slice(2));
   const token = args.token ?? process.env.ELWING_TOKEN ?? process.env.SANDBOX_WS_TOKEN;
 
+  const hostArch = detectHostArch();
+  const consoleDevice = hostArch === "arm64" ? "ttyAMA0" : "ttyS0";
+
   const sandboxConfig: SandboxConfig = {
     qemuPath: args.qemuPath,
     kernelPath: args.kernelPath,
@@ -323,7 +388,7 @@ function main() {
     memory: args.memory,
     cpus: args.cpus,
     virtioSocketPath: args.virtioSocketPath,
-    append: "console=ttyS0",
+    append: `console=${consoleDevice}`,
     machineType: args.machineType,
     accel: args.accel,
     cpu: args.cpu,
@@ -352,6 +417,9 @@ function main() {
   };
 
   controller.on("state", (state) => {
+    if (state === "running") {
+      bridge.connect();
+    }
     if (state === "stopped") {
       failInflight("sandbox_stopped", "sandbox is not running");
     }
@@ -362,12 +430,25 @@ function main() {
     }
   });
 
+  let qemuLogBuffer = "";
+
   controller.on("exit", () => {
+    if (qemuLogBuffer.length > 0) {
+      process.stdout.write(`[qemu] ${qemuLogBuffer}\n`);
+      qemuLogBuffer = "";
+    }
     failInflight("sandbox_stopped", "sandbox exited");
   });
 
-  controller.on("log", (line: string) => {
-    process.stdout.write(`[qemu] ${line}`);
+  controller.on("log", (chunk: string) => {
+    qemuLogBuffer += chunk;
+    let newlineIndex = qemuLogBuffer.indexOf("\n");
+    while (newlineIndex !== -1) {
+      const line = qemuLogBuffer.slice(0, newlineIndex + 1);
+      qemuLogBuffer = qemuLogBuffer.slice(newlineIndex + 1);
+      process.stdout.write(`[qemu] ${line}`);
+      newlineIndex = qemuLogBuffer.indexOf("\n");
+    }
   });
 
   bridge.onMessage = (message) => {
@@ -501,8 +582,8 @@ function main() {
     });
   });
 
-  void controller.start();
   bridge.connect();
+  void controller.start();
 
   console.log(`WebSocket server listening on ws://${args.host}:${args.port}`);
 

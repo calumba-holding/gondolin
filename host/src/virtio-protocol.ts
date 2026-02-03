@@ -110,11 +110,17 @@ export function buildExecRequest(
   id: number,
   payload: ExecRequest["p"]
 ): ExecRequest {
+  const cleaned: ExecRequest["p"] = { cmd: payload.cmd };
+  if (payload.argv !== undefined) cleaned.argv = payload.argv;
+  if (payload.env !== undefined) cleaned.env = payload.env;
+  if (payload.cwd !== undefined) cleaned.cwd = payload.cwd;
+  if (payload.stdin !== undefined) cleaned.stdin = payload.stdin;
+
   return {
     v: 1,
     t: "exec_request",
     id,
-    p: payload,
+    p: cleaned,
   };
 }
 

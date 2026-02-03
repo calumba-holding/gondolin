@@ -1,8 +1,9 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{
-        .default_target = .{ .cpu_arch = .x86_64, .os_tag = .linux, .abi = .musl },
+        .default_target = .{ .cpu_arch = builtin.cpu.arch, .os_tag = .linux, .abi = .musl },
     });
     const optimize = b.standardOptimizeOption(.{});
 

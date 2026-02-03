@@ -38,7 +38,6 @@ export class SandboxController extends EventEmitter {
 
     this.manualStop = false;
     this.setState("starting");
-    fs.rmSync(this.config.virtioSocketPath, { force: true });
 
     const args = buildQemuArgs(this.config);
     this.child = spawn(this.config.qemuPath, args, {
@@ -133,7 +132,8 @@ function buildQemuArgs(config: SandboxConfig) {
     "-nographic",
   ];
 
-  const machineType = config.machineType ?? selectMachineType();
+  const targetArch = detectTargetArch(config);
+  const machineType = config.machineType ?? selectMachineType(targetArch);
   args.push("-machine", machineType);
 
   const accel = config.accel ?? selectAccel();
@@ -152,19 +152,34 @@ function buildQemuArgs(config: SandboxConfig) {
   args.push("-device", "virtio-rng-pci,rng=rng0");
   args.push(
     "-chardev",
-    `socket,id=virtiocon0,path=${config.virtioSocketPath},server=on,wait=on`
+    `socket,id=virtiocon0,path=${config.virtioSocketPath},server=off`
   );
-  args.push("-device", "virtio-serial-pci");
-  args.push("-device", "virtserialport,chardev=virtiocon0,name=virtio-port");
+
+  args.push("-device", "virtio-serial-pci,id=virtio-serial0");
+  args.push(
+    "-device",
+    "virtserialport,chardev=virtiocon0,name=virtio-port,bus=virtio-serial0.0"
+  );
 
   return args;
 }
 
-function selectMachineType() {
-  if (process.platform === "linux" && process.arch === "x64") {
+function detectTargetArch(config: SandboxConfig): string {
+  const qemuPath = config.qemuPath.toLowerCase();
+  if (qemuPath.includes("aarch64") || qemuPath.includes("arm64")) {
+    return "arm64";
+  }
+  if (qemuPath.includes("x86_64") || qemuPath.includes("x64")) {
+    return "x64";
+  }
+  return process.arch;
+}
+
+function selectMachineType(targetArch: string) {
+  if (process.platform === "linux" && targetArch === "x64") {
     return "microvm";
   }
-  if (process.arch === "arm64") {
+  if (targetArch === "arm64") {
     return "virt";
   }
   return "q35";
