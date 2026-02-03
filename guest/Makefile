@@ -1,4 +1,6 @@
-.PHONY: build test clean run image kernel qemu lint typecheck format
+.PHONY: build build-inner test clean run image image-inner kernel kernel-inner qemu lint typecheck format
+
+RUN_PARALLEL ?= ../scripts/run-parallel
 
 ZIG ?= zig
 OPTIMIZE ?= ReleaseSmall
@@ -53,15 +55,27 @@ QEMU_WAIT ?= on
 VIRTIO_SOCK ?= $(IMAGE_OUT)/virtio.sock
 
 build:
+	@$(RUN_PARALLEL) -j 1 \
+		"guest:build" "$(MAKE) build-inner"
+
+build-inner:
 	$(ZIG) build -Doptimize=$(OPTIMIZE)
 
 run: build
 	./zig-out/bin/sandboxd
 
-image: build
+image:
+	@$(RUN_PARALLEL) -j 1 \
+		"guest:image" "$(MAKE) image-inner"
+
+image-inner: build
 	ARCH=$(ALPINE_ARCH) MITM_CA_CERT=$(MITM_CA_CERT) $(IMAGE_SCRIPT)
 
 kernel:
+	@$(RUN_PARALLEL) -j 1 \
+		"guest:kernel" "$(MAKE) kernel-inner"
+
+kernel-inner:
 	@set -e; \
 		mkdir -p $(IMAGE_OUT); \
 		if [ -f "$(KERNEL)" ]; then \

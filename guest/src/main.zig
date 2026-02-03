@@ -315,7 +315,12 @@ fn handleExec(allocator: std.mem.Allocator, virtio_fd: std.posix.fd_t, req: prot
         if (stdout_index) |sindex| {
             const revents = pollfds[sindex].revents;
             if ((revents & (std.posix.POLL.IN | std.posix.POLL.HUP)) != 0) {
-                const n = try std.posix.read(stdout_fd.?, buffer[0..]);
+                const n = std.posix.read(stdout_fd.?, buffer[0..]) catch |err| blk: {
+                    if (use_pty and err == error.InputOutput) {
+                        break :blk 0;
+                    }
+                    return err;
+                };
                 if (n == 0) {
                     stdout_open = false;
                     if (stdout_fd) |fd| std.posix.close(fd);

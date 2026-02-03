@@ -127,14 +127,14 @@ for repo in repos:
         url = f"{repo}/{arch}/APKINDEX.tar.gz"
         download(url, tar_path)
         with tarfile.open(tar_path, "r:gz") as tar:
-            tar.extract("APKINDEX", cache_dir)
+            tar.extract("APKINDEX", cache_dir, filter="fully_trusted")
         os.replace(os.path.join(cache_dir, "APKINDEX"), index_path)
     parse_index(index_path, repo)
 
 
 def normalize_dep(dep: str) -> str:
     dep = dep.lstrip("!")
-    dep = re.split(r"[<>=~]", dep, 1)[0]
+    dep = re.split(r"[<>=~]", dep, maxsplit=1)[0]
     return dep
 
 
@@ -174,7 +174,7 @@ for pkg_name in needed:
         url = f"{repo}/{arch}/{apk_name}"
         download(url, apk_path)
     with tarfile.open(apk_path, "r:gz") as tar:
-        tar.extractall(rootfs_dir)
+        tar.extractall(rootfs_dir, filter="fully_trusted")
 PY
 fi
 
