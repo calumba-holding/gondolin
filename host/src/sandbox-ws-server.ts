@@ -26,6 +26,7 @@ import { SandboxController, SandboxConfig, SandboxState } from "./sandbox-contro
 import { QemuNetworkBackend } from "./qemu-net";
 import type { HttpFetch, HttpHooks } from "./qemu-net";
 import type { SandboxPolicy } from "./policy";
+import type { SandboxVfsProvider } from "./vfs";
 
 const MAX_REQUEST_ID = 0xffffffff;
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
@@ -56,6 +57,7 @@ export type SandboxWsServerOptions = {
   policy?: SandboxPolicy;
   fetch?: HttpFetch;
   httpHooks?: HttpHooks;
+  vfsProvider?: SandboxVfsProvider;
 };
 
 export type SandboxWsServerAddress = {
@@ -89,6 +91,7 @@ type ResolvedServerOptions = {
   policy: SandboxPolicy | null;
   fetch?: HttpFetch;
   httpHooks?: HttpHooks;
+  vfsProvider: SandboxVfsProvider | null;
 };
 
 export function resolveSandboxWsServerOptions(
@@ -130,6 +133,7 @@ export function resolveSandboxWsServerOptions(
     policy: options.policy ?? null,
     fetch: options.fetch,
     httpHooks: options.httpHooks,
+    vfsProvider: options.vfsProvider ?? null,
   };
 }
 
@@ -403,6 +407,7 @@ export class SandboxWsServer extends EventEmitter {
   private readonly bridge: VirtioBridge;
   private readonly network: QemuNetworkBackend | null;
   private wss: WebSocketServer | null = null;
+  private vfsProvider: SandboxVfsProvider | null;
   private inflight = new Map<number, WebSocket>();
   private stdinAllowed = new Set<number>();
   private startPromise: Promise<SandboxWsServerAddress> | null = null;
@@ -416,6 +421,7 @@ export class SandboxWsServer extends EventEmitter {
     super();
     this.options = resolveSandboxWsServerOptions(options);
     this.policy = this.options.policy;
+    this.vfsProvider = this.options.vfsProvider;
 
     const hostArch = detectHostArch();
     const consoleDevice = hostArch === "arm64" ? "ttyAMA0" : "ttyS0";
@@ -566,6 +572,10 @@ export class SandboxWsServer extends EventEmitter {
 
   getPolicy() {
     return this.policy;
+  }
+
+  getVfsProvider() {
+    return this.vfsProvider;
   }
 
   setPolicy(policy: SandboxPolicy | null) {

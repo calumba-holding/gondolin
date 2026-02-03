@@ -7,10 +7,13 @@ OPTIMIZE ?= ReleaseSmall
 TSX ?= ../host/node_modules/.bin/tsx
 
 ZIG_SOURCES := $(shell find src -name '*.zig') build.zig
+ZIG_BUILD_DEPS := $(ZIG_SOURCES) build.zig.zon
 
 IMAGE_SCRIPT ?= ./image/build.sh
 IMAGE_OUT ?= ./image/out
 IMAGE_INITRAMFS ?= $(IMAGE_OUT)/initramfs.cpio.gz
+IMAGE_INIT ?= ./image/init
+SANDBOXD_BIN ?= $(CURDIR)/zig-out/bin/sandboxd
 
 ALPINE_BRANCH ?= v3.20
 ALPINE_MIRROR ?= https://dl-cdn.alpinelinux.org/alpine
@@ -42,6 +45,7 @@ ALPINE_ARCH ?= $(DEFAULT_ARCH)
 QEMU ?= $(DEFAULT_QEMU)
 QEMU_MACHINE ?=
 MITM_CA_CERT ?= $(abspath $(CURDIR)/../host/var/mitm/ca.crt)
+MITM_CA_CERT_PATH := $(wildcard $(MITM_CA_CERT))
 ifeq ($(ALPINE_ARCH),aarch64)
 QEMU_MACHINE ?= -machine virt
 endif
@@ -65,12 +69,17 @@ build-inner:
 run: build
 	./zig-out/bin/sandboxd
 
+$(SANDBOXD_BIN): $(ZIG_BUILD_DEPS)
+	$(ZIG) build -Doptimize=$(OPTIMIZE)
+
+$(IMAGE_INITRAMFS): $(SANDBOXD_BIN) $(IMAGE_SCRIPT) $(IMAGE_INIT) $(MITM_CA_CERT_PATH)
+	ARCH=$(ALPINE_ARCH) MITM_CA_CERT=$(MITM_CA_CERT) $(IMAGE_SCRIPT)
+
 image:
 	@$(RUN_PARALLEL) -j 1 \
 		"guest:image" "$(MAKE) image-inner"
 
-image-inner: build
-	ARCH=$(ALPINE_ARCH) MITM_CA_CERT=$(MITM_CA_CERT) $(IMAGE_SCRIPT)
+image-inner: $(IMAGE_INITRAMFS)
 
 kernel:
 	@$(RUN_PARALLEL) -j 1 \

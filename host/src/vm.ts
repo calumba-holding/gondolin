@@ -12,6 +12,12 @@ import {
 import { SandboxWsServer, SandboxWsServerOptions } from "./sandbox-ws-server";
 import type { SandboxState } from "./sandbox-controller";
 import type { HttpFetch, HttpHooks } from "./qemu-net";
+import {
+  InMemoryFsBackend,
+  SandboxVfsProvider,
+  type VfsBackend,
+  type VfsHooks,
+} from "./vfs";
 
 const MAX_REQUEST_ID = 0xffffffff;
 const DEFAULT_STDIN_CHUNK = 32 * 1024;
@@ -52,6 +58,12 @@ export type ExecStream = {
   result: Promise<ExecResult>;
 };
 
+export type VmVfsOptions = {
+  provider?: SandboxVfsProvider;
+  backend?: VfsBackend;
+  hooks?: VfsHooks;
+};
+
 export type VMOptions = {
   url?: string;
   token?: string;
@@ -60,6 +72,7 @@ export type VMOptions = {
   autoStart?: boolean;
   fetch?: HttpFetch;
   httpHooks?: HttpHooks;
+  vfs?: VmVfsOptions | null;
 };
 
 type ExecSession = {
@@ -100,6 +113,7 @@ export class VM {
   private sessions = new Map<number, ExecSession>();
   private nextId = 1;
   private policy: SandboxPolicy | null;
+  private vfs: SandboxVfsProvider | null;
 
   constructor(options: VMOptions = {}) {
     if (options.url && options.server) {
@@ -110,6 +124,7 @@ export class VM {
       options.token ?? process.env.ELWING_TOKEN ?? process.env.SANDBOX_WS_TOKEN;
     this.autoStart = options.autoStart ?? true;
     this.policy = options.policy ?? null;
+    this.vfs = resolveVmVfs(options.vfs);
 
     if (options.url) {
       this.url = options.url;
@@ -123,6 +138,9 @@ export class VM {
     }
     if (options.httpHooks && serverOptions.httpHooks === undefined) {
       serverOptions.httpHooks = options.httpHooks;
+    }
+    if (this.vfs && serverOptions.vfsProvider === undefined) {
+      serverOptions.vfsProvider = this.vfs;
     }
     if (serverOptions.host === undefined) serverOptions.host = "127.0.0.1";
     if (serverOptions.port === undefined) serverOptions.port = 0;
@@ -144,6 +162,10 @@ export class VM {
 
   getPolicy() {
     return this.policy;
+  }
+
+  getVfs() {
+    return this.vfs;
   }
 
   setPolicy(policy: SandboxPolicy) {
@@ -256,6 +278,9 @@ export class VM {
     if (this.server) {
       await this.server.stop();
       this.url = null;
+    }
+    if (this.vfs) {
+      await this.vfs.close();
     }
     await this.disconnect();
   }
@@ -648,6 +673,15 @@ function normalizeCommand(command: ExecInput, options: ExecOptions): {
   }
 
   return { cmd: command, argv: options.argv ?? [] };
+}
+
+function resolveVmVfs(options?: VmVfsOptions | null) {
+  if (options === null) return null;
+  if (!options) {
+    return new SandboxVfsProvider(new InMemoryFsBackend());
+  }
+  if (options.provider) return options.provider;
+  return new SandboxVfsProvider(options.backend ?? new InMemoryFsBackend(), options.hooks ?? {});
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<Buffer> {

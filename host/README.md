@@ -13,10 +13,34 @@ VM.
 - TLS MITM is implemented: a local CA + per-host leaf certs are generated under `var/mitm` and used to re-encrypt TLS.
 - UDP forwarding is limited to DNS (port 53). The guest still points at `8.8.8.8` by default.
 - A WS test (`pnpm run test:ws`) exercises guest HTTP/HTTPS fetches against icanhazip.com.
+- The `VM` client exposes a hookable in-memory VFS provider for filesystem policy experiments.
 
 ## What is *not* implemented yet
 - SandboxPolicy allow/deny rules are defined but not enforced for DNS/HTTP/TLS.
 - Generic TCP/UDP passthrough (beyond HTTP/TLS + DNS) is not supported.
+
+## Filesystem hooks
+
+`VM` can expose a hookable VFS provider (defaults to an in-memory backend). Pass
+hooks or a custom backend via `vfs` (or set `vfs: null` to disable) and access
+the provider with `getVfs()`:
+
+```ts
+import { VM } from "./src/vm";
+import { InMemoryFsBackend } from "./src/vfs";
+
+const vm = new VM({
+  vfs: {
+    backend: new InMemoryFsBackend(),
+    hooks: {
+      before: (ctx) => console.log("before", ctx.op, ctx.path),
+      after: (ctx) => console.log("after", ctx.op, ctx.path),
+    },
+  },
+});
+
+const vfs = vm.getVfs();
+```
 
 ## Useful commands
 - `pnpm run dev:ws -- --net-debug` to start the WS server with network debug logging.

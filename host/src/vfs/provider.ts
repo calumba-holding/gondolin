@@ -66,6 +66,7 @@ export interface VfsBackend {
   renameSync(oldPath: string, newPath: string): void;
   truncate(path: string, length: number): Promise<void>;
   truncateSync(path: string, length: number): void;
+  close?: () => Promise<void> | void;
 }
 
 class HookedHandle implements VfsBackendHandle {
@@ -472,6 +473,12 @@ export class SandboxVfsProvider {
     this.runBeforeSync({ op: "truncate", path, size: length });
     this.backend.truncateSync(path, length);
     this.runAfterSync({ op: "truncate", path, size: length });
+  }
+
+  async close() {
+    if (this.backend.close) {
+      await this.backend.close();
+    }
   }
 
   private wrapHandle(path: string, handle: VfsBackendHandle) {
