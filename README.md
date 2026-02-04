@@ -1,37 +1,86 @@
-# Gondolin Sandbox
+# Gondolin
 
-This repo implements an Alpine Linux based sandbox, primarily for agent use.  It
-focuses on a QEMU-based micro-VM with a tiny guest supervisor, a virtio-serial
-RPC, and a JavaScript based host control plane that enforces filesystem and
-network policy.
+**Local Linux micro-VMs with a fully programmable network stack and filesystem.**
 
-## Quick Start (NPM)
+AI agents are generating code that runs immediately and increasingly without
+human review.  That code often calls external APIs, which means it needs
+credentials and network access.  Sandboxing the compute isn't enough as you need
+to control network egress and protect secrets from exfiltration.  You also
+want to be able to tighly control the file system, for convenience of the agent
+and to control persistence.
 
-```bash
-# Run an interactive bash session in the sandbox
-npx @earendil-works/gondolin bash
+Gondolin gives you that.  Lightweight QEMU micro-VMs boot in seconds on your Mac
+or Linux machine.  The network stack and virtual filesystem are implemented
+entirely in JavaScript, giving you complete programmatic control over what the
+sandbox can access and what secrets it can use.
 
-# Or install globally
-npm install -g @earendil-works/gondolin
-gondolin bash
+```ts
+import { VM, createHttpHooks } from "@earendil-works/gondolin";
+
+const { httpHooks, env } = createHttpHooks({
+  allowedHosts: ["api.openai.com"],
+  secrets: {
+    OPENAI_API_KEY: {
+      hosts: ["api.openai.com"],
+      value: process.env.OPENAI_API_KEY,
+    },
+  },
+});
+
+const vm = await VM.create({ httpHooks, env });
+await vm.exec("curl -H \"Authorization: Bearer $OPENAI_API_KEY\" https://api.openai.com/v1/models");
+await vm.close();
 ```
 
-Guest images are automatically downloaded from GitHub releases on first run.
+The guest never sees the real API key. It only gets a placeholder.  The actual
+secret is injected by the host, only when making requests to approved hosts.  If
+prompt-injected code tries to exfiltrate that placeholder to an unauthorized
+server it won't be able to get it quite as easily.
 
-## Motivation
+## Quick Start
 
-We want to have a strong sandbox with a good security boundary that allows
-agents to run untrusted code.  That sandbox we want to be connected to a control
-plane that can be influenced to make security decisions on both the file system
-and network layer and we want this whole system to run locally.
+```bash
+npx @earendil-works/gondolin bash
+```
 
-Our goals:
+Guest images (~200MB) are downloaded automatically on first run.  You'll need
+QEMU and Node installed:
 
-- Enable an actual Linux sandbox that is familiar to LLMs who are RLed on them.
-- Guard network and filesystem access with explicit policy that can be code controlled.
-- Fast create/exec/teardown for LLM workflows.
-- Behavior parity between macOS and production Linux.
-- Strong isolation between tenants to prevent cross-account access.
+| macOS | Linux (Debian/Ubuntu) |
+|-------|----------------------|
+| `brew install qemu node` | `sudo apt install qemu-system-arm nodejs npm` |
+
+> **Note:** Only ARM64 (Apple Silicon, Linux aarch64) is currently tested.
+
+## Why Gondolin?
+
+- **Runs locally.** Same behavior on macOS and Linux without a specific cloud dependency.
+- **Secrets that can't be stolen.** Credentials are injected at the network layer, never visible inside the VM (implemented as a hook that can be changed)
+- **Programmable network policy.** Allowlist hosts, hook requests/responses, block internal ranges—all in JavaScript.
+- **Programmable filesystem.** Mount in-memory filesystems, proxy to remote storage, or hook every operation.
+- **Fast.** Boots quickly, optimized for LLM workflows that spin up, execute, and tear down frequently.
+- **Familiar environment.** A real Linux VM that LLMs know how to use.
+
+## Programmable Filesystem
+
+The VFS layer lets you control what the guest sees. Mount in-memory filesystems,
+expose host directories (read-only or read-write), or implement custom providers
+that proxy to remote storage:
+
+```ts
+import { VM, MemoryProvider, RealFSProvider, ReadonlyProvider } from "@earendil-works/gondolin";
+
+const vm = await VM.create({
+  vfs: {
+    mounts: {
+      "/workspace": new MemoryProvider(),
+      "/data": new ReadonlyProvider(new RealFSProvider("/host/data")),
+    },
+  },
+});
+```
+
+See [`host/README.md`](host/README.md) for full API details.
 
 ## Choices
 
@@ -70,76 +119,3 @@ Our goals:
 
 - [`guest/`](guest/) — Zig-based `sandboxd` daemon, Alpine initramfs build, and QEMU helpers.
 - [`host/`](host/) — TypeScript host controller + WebSocket server that works with the guest.
-
-## Library Usage
-
-The host controller lets you spin up a sandboxed VM with controlled filesystem
-and network access. Here's a minimal example that shows some of the power:
-
-```ts
-import { VM, MemoryProvider, createHttpHooks } from "@earendil-works/gondolin";
-
-// Set up network policy with secret injection
-const { httpHooks, env } = createHttpHooks({
-  allowedHosts: ["api.github.com"],
-  secrets: {
-    GITHUB_TOKEN: {
-      hosts: ["api.github.com"],
-      value: process.env.GITHUB_TOKEN!,
-    },
-  },
-});
-
-// Create VM with in-memory filesystem and network hooks
-// Use VM.create() to auto-download guest assets if needed
-const vm = await VM.create({
-  httpHooks,
-  env,
-  vfs: {
-    mounts: { "/": new MemoryProvider() },
-  },
-});
-
-// Run commands — secrets are injected by the host, never visible to the guest
-await vm.exec("curl -H 'Authorization: Bearer $GITHUB_TOKEN' https://api.github.com/user");
-await vm.close();
-```
-
-The guest never sees real credentials because the host intercepts outgoing
-requests and injects secrets only for matching hosts.  See
-[`host/README.md`](host/README.md) for full details on HTTP hooks, VFS mounts,
-and the network stack.
-
-## Requirements
-
-**Note:** Currently only ARM64 (Apple Silicon, Linux aarch64) is tested. x86_64
-support exists in the code but is untested.
-
-These are required to use Gondolin. The guest image (kernel, initramfs, rootfs)
-is automatically downloaded from GitHub releases on first run.
-
-**macOS (Homebrew):**
-
-```bash
-brew install qemu node
-```
-
-**Linux (Debian/Ubuntu):**
-
-```bash
-sudo apt install qemu-system-arm nodejs npm
-```
-
-These are only needed if you want to build the guest image from source:
-
-**macOS (Homebrew):**
-
-```bash
-brew install zig lz4 e2fsprogs
-```
-
-**Linux (Debian/Ubuntu):**
-
-```bash
-sudo apt install zig lz4 cpio curl e2fsprogs
-```

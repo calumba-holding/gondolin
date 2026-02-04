@@ -1,25 +1,43 @@
-# @earendil-works/gondolin
+# Gondolin
 
-This package provides the host-side library and CLI for the Gondolin sandbox VM.
+**Local Linux micro-VMs with a fully programmable network stack and filesystem.**
+
+AI agents are generating code that runs immediately and increasingly without
+human review.  That code often calls external APIs, which means it needs
+credentials and network access.  Sandboxing the compute isn't enough as you need
+to control network egress and protect secrets from exfiltration.  You also
+want to be able to tighly control the file system, for convenience of the agent
+and to control persistence.
+
+Gondolin gives you that.  Lightweight QEMU micro-VMs boot in seconds on your Mac
+or Linux machine.  The network stack and virtual filesystem are implemented
+entirely in JavaScript, giving you complete programmatic control over what the
+sandbox can access and what secrets it can use.
+
+## Requirements
+
+You need QEMU installed to run the micro-VMs:
+
+| macOS | Linux (Debian/Ubuntu) |
+|-------|----------------------|
+| `brew install qemu` | `sudo apt install qemu-system-arm` |
+
+> **Note:** Only ARM64 (Apple Silicon, Linux aarch64) is currently tested.
 
 ## Installation
 
 ```bash
 npm install @earendil-works/gondolin
-# or
-pnpm add @earendil-works/gondolin
 ```
 
 ## Quick Start
-
-Run an interactive bash session in the sandbox:
 
 ```bash
 npx @earendil-works/gondolin bash
 ```
 
-On first run, the guest image (~200MB) will be automatically downloaded from
-GitHub releases and cached in `~/.cache/gondolin/`.
+Guest images (~200MB) are automatically downloaded on first run and cached in
+`~/.cache/gondolin/`.
 
 ## Library Usage
 
@@ -210,12 +228,6 @@ pnpm run bash
 pnpm run test
 ```
 
-## Requirements
-
-- Node.js >= 18
-- QEMU (`qemu-system-aarch64` on ARM64, `qemu-system-x86_64` on x64)
-- macOS or Linux
-
 ## License
 
-MIT
+Apache-2.0

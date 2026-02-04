@@ -19,6 +19,12 @@ tooling to boot the micro-VM under QEMU.
 - `build.zig` — Zig build definition for `sandboxd`.
 - `Makefile` — helpers to build, create images, and run QEMU.
 
+## Requirements
+
+| macOS | Linux (Debian/Ubuntu) |
+|-------|----------------------|
+| `brew install zig lz4 e2fsprogs` | `sudo apt install zig lz4 cpio curl e2fsprogs` |
+
 ## Common tasks
 
 Mandatory build command (builds the initramfs image and kernel without booting):
