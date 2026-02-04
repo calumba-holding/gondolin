@@ -67,6 +67,10 @@ export type VMOptions = {
   httpHooks?: HttpHooks;
   vfs?: VmVfsOptions | null;
   env?: EnvInput;
+  /** Maximum memory for the VM (e.g., "1G", "512M"). Default: "1G" */
+  memory?: string;
+  /** Number of CPU cores for the VM. Default: 2 */
+  cpus?: number;
 };
 
 export type ShellOptions = {
@@ -158,6 +162,12 @@ export class VM {
     if (serverOptions.port === undefined) serverOptions.port = 0;
     if (this.policy && serverOptions.policy === undefined) {
       serverOptions.policy = this.policy;
+    }
+    if (options.memory && serverOptions.memory === undefined) {
+      serverOptions.memory = options.memory;
+    }
+    if (options.cpus && serverOptions.cpus === undefined) {
+      serverOptions.cpus = options.cpus;
     }
 
     const debugFlags = parseDebugEnv();
