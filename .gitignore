@@ -8,6 +8,7 @@ guest/zig-out/
 guest/.zig-cache/
 guest/image/out/
 guest/image/.cache/
+node_modules/
 host/node_modules/
 host/dist/
 host/var/

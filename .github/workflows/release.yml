@@ -1,0 +1,154 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g., v0.1.0)'
+        required: true
+
+jobs:
+  build-guest-x64:
+    name: Build Guest Image (x64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 lz4
+
+      - name: Build guest image
+        run: |
+          cd guest
+          make image
+
+      - name: Package x64 assets
+        run: |
+          cd guest/image/out
+          tar -czvf ../../../gondolin-guest-x64.tar.gz \
+            vmlinuz-virt initramfs.cpio.lz4 rootfs.ext4
+
+      - name: Upload x64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gondolin-guest-x64
+          path: gondolin-guest-x64.tar.gz
+          retention-days: 1
+
+  build-guest-arm64:
+    name: Build Guest Image (arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-arm lz4
+
+      - name: Build guest image (arm64)
+        run: |
+          cd guest
+          ARCH=aarch64 make image
+
+      - name: Package arm64 assets
+        run: |
+          cd guest/image/out
+          tar -czvf ../../../gondolin-guest-arm64.tar.gz \
+            vmlinuz-virt initramfs.cpio.lz4 rootfs.ext4
+
+      - name: Upload arm64 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: gondolin-guest-arm64
+          path: gondolin-guest-arm64.tar.gz
+          retention-days: 1
+
+  create-release:
+    name: Create Release
+    needs: [build-guest-x64, build-guest-arm64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gondolin-guest-x64
+
+      - name: Download arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: gondolin-guest-arm64
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: Release ${{ steps.version.outputs.version }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          files: |
+            gondolin-guest-x64.tar.gz
+            gondolin-guest-arm64.tar.gz
+          body: |
+            ## Gondolin ${{ steps.version.outputs.version }}
+
+            ### Guest Image Assets
+
+            Download the appropriate asset for your platform:
+            - `gondolin-guest-x64.tar.gz` - For x86_64 systems
+            - `gondolin-guest-arm64.tar.gz` - For ARM64 systems (Apple Silicon, etc.)
+
+            ### NPM Package
+
+            ```bash
+            npm install @earendil-works/gondolin@${{ steps.version.outputs.version }}
+            ```
+
+            The guest image will be automatically downloaded on first use.
+
+  publish-npm:
+    name: Publish to NPM
+    needs: [create-release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Publish to NPM
+        run: |
+          cd host
+          pnpm publish --access public --no-git-checks
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

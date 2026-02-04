@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import fs from "fs";
 import net from "net";
 import path from "path";
@@ -414,7 +415,8 @@ function buildCommandPayload(command: Command) {
 async function runExecWs(args: ExecArgs) {
   const vmOptions = buildVmOptions(args.common);
 
-  const vm = new VM({
+  // Use VM.create() to ensure guest assets are available
+  const vm = await VM.create({
     url: WS_URL ?? undefined,
     token: TOKEN ?? undefined,
     ...vmOptions,
@@ -612,7 +614,8 @@ async function runBash(argv: string[]) {
   const args = parseBashArgs(argv);
   const vmOptions = buildVmOptions(args);
 
-  const vm = new VM({
+  // Use VM.create() to ensure guest assets are available
+  const vm = await VM.create({
     url: WS_URL ?? undefined,
     token: TOKEN ?? undefined,
     ...vmOptions,
@@ -759,7 +762,8 @@ function formatWsServerLog(message: string) {
 
 async function runWsServer(argv: string[] = process.argv.slice(2)) {
   const args = parseWsServerArgs(argv);
-  const server = new SandboxWsServer(args);
+  // Use SandboxWsServer.create() to ensure guest assets are available
+  const server = await SandboxWsServer.create(args);
 
   server.on("log", (message: string) => {
     process.stdout.write(formatWsServerLog(message));

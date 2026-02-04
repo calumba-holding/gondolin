@@ -1,249 +1,221 @@
-# Gondolin Host Controller
+# @earendil-works/gondolin
 
-This package contains the host-side CLI and WebSocket controller for the sandbox
-VM.
+This package provides the host-side library and CLI for the Gondolin sandbox VM.
 
-## Current state
+## Installation
 
-- QEMU is launched with a **virtio-serial** control channel and a **virtio-net** device wired to a host socket backend.
-- A WebSocket server exposes an exec API (stdin/pty + streaming stdout/stderr) that the CLI and `VM` client use.
-- The host runs a **TypeScript network stack** (`NetworkStack`) that implements Ethernet framing, ARP, IPv4, ICMP, DHCP, TCP, and UDP.
-- TCP flows are classified; only HTTP and TLS are accepted (CONNECT is rejected). Other TCP traffic is dropped.
-- HTTP/HTTPS requests are terminated on the host and bridged via `fetch` (undici) with optional request/response hooks and DNS-rebind-safe allowlist checks.
-- TLS MITM is implemented: a local CA + per-host leaf certs are generated under `var/mitm` and used to re-encrypt TLS.
-- UDP forwarding is limited to DNS (port 53). The guest still points at `8.8.8.8` by default.
-- A WS test (`pnpm run test:ws`) exercises guest HTTP/HTTPS fetches against icanhazip.com.
-- The `VM` client exposes hookable VFS mounts (defaults to a `MemoryProvider` at `/`) for filesystem policy experiments.
+```bash
+npm install @earendil-works/gondolin
+# or
+pnpm add @earendil-works/gondolin
+```
 
-## What is *not* implemented yet
-- SandboxPolicy allow/deny rules are defined but not enforced for DNS/HTTP/TLS.
-- Generic TCP/UDP passthrough (beyond HTTP/TLS + DNS) is not supported.
+## Quick Start
 
-## Networking approach
+Run an interactive bash session in the sandbox:
 
-Instead of attaching the VM to a real bridge/tap device, QEMU streams raw
-Ethernet frames over a Unix socket into a TypeScript network stack.  That stack
-decodes ARP/IP/TCP/UDP and deliberately only allows HTTP and TLS.  When an HTTP
-flow is detected (or TLS that can be MITM'ed), the host intercepts the request
-in JavaScript and replays it via `fetch`.  This gives a single, portable control
-point for policy enforcement, logging, and request/response hooks without
-granting the guest arbitrary socket access or requiring privileged host network
-setup.
+```bash
+npx @earendil-works/gondolin bash
+```
 
-**Note on redirects:** Because requests are proxied via `fetch` on the host,
-HTTP redirects are followed and resolved on the host side before the response
-is returned to the guest. This means tools like `curl` inside the guest will
-receive the final response directly and won't observe intermediate redirect
-responses (e.g., 301, 302, 307). The guest sees the request as if no redirect
-occurred.
+On first run, the guest image (~200MB) will be automatically downloaded from
+GitHub releases and cached in `~/.cache/gondolin/`.
 
-## Filesystem hooks
-
-`VM` can expose hookable VFS mounts (defaults to `MemoryProvider` at `/`). Pass
-mounts and optional hooks via `vfs` (or set `vfs: null` to disable) and access
-the provider with `getVfs()`:
+## Library Usage
 
 ```ts
-import { VM } from "./src/vm";
-import { MemoryProvider } from "./src/vfs";
+import { VM, createHttpHooks, MemoryProvider } from "@earendil-works/gondolin";
 
-const vm = new VM({
+// Create a VM with network policy
+const { httpHooks, env } = createHttpHooks({
+  allowedHosts: ["api.github.com"],
+  secrets: {
+    GITHUB_TOKEN: {
+      hosts: ["api.github.com"],
+      value: process.env.GITHUB_TOKEN!,
+    },
+  },
+});
+
+// Use VM.create() to auto-download guest assets if needed
+const vm = await VM.create({
+  httpHooks,
+  env,
   vfs: {
     mounts: { "/": new MemoryProvider() },
+  },
+});
+
+// Run commands
+const result = await vm.exec("curl -H 'Authorization: Bearer $GITHUB_TOKEN' https://api.github.com/user");
+console.log(result.stdout);
+
+await vm.close();
+```
+
+## Features
+
+- **QEMU micro-VM** with virtio-serial control channel and virtio-net device
+- **WebSocket API** for exec (stdin/pty + streaming stdout/stderr)
+- **TypeScript network stack** implementing Ethernet, ARP, IPv4, ICMP, DHCP, TCP, UDP
+- **HTTP/HTTPS interception** with request/response hooks and DNS-rebind-safe allowlists
+- **TLS MITM** with auto-generated CA and per-host leaf certificates
+- **VFS mounts** with hookable providers (memory, real filesystem, read-only)
+- **Secret injection** that never exposes credentials inside the guest
+
+## CLI Commands
+
+### gondolin bash
+
+Launch an interactive bash session:
+
+```bash
+gondolin bash [options]
+```
+
+Options:
+- `--mount-hostfs HOST:GUEST[:ro]` - Mount host directory at guest path
+- `--mount-memfs PATH` - Create memory-backed mount at path
+- `--allow-host HOST` - Allow HTTP requests to host (supports wildcards)
+- `--host-secret NAME@HOST[,HOST...][=VALUE]` - Add secret for specified hosts
+
+Examples:
+
+```bash
+# Mount a project directory
+gondolin bash --mount-hostfs ~/project:/workspace
+
+# Mount read-only with network access
+gondolin bash --mount-hostfs /data:/data:ro --allow-host api.github.com
+
+# With secret injection (reads from $GITHUB_TOKEN env var)
+gondolin bash --allow-host api.github.com --host-secret GITHUB_TOKEN@api.github.com
+```
+
+### gondolin exec
+
+Run a command in the sandbox:
+
+```bash
+gondolin exec [options] -- COMMAND [ARGS...]
+```
+
+Examples:
+
+```bash
+# Simple command
+gondolin exec -- ls -la /
+
+# With mounted filesystem
+gondolin exec --mount-hostfs ~/project:/workspace -- npm test
+```
+
+### gondolin ws-server
+
+Start the WebSocket bridge server:
+
+```bash
+gondolin ws-server [options]
+```
+
+Options:
+- `--host HOST` - Host to bind (default: 127.0.0.1)
+- `--port PORT` - Port to bind (default: 8080)
+- `--kernel PATH` - Custom kernel path
+- `--initrd PATH` - Custom initrd path
+- `--rootfs PATH` - Custom rootfs path
+- `--memory SIZE` - Memory size (default: 1G)
+- `--cpus N` - CPU count (default: 2)
+
+## Network Policy
+
+The network stack only allows HTTP and TLS traffic. TCP flows are classified and
+non-HTTP traffic is dropped. Requests are intercepted and replayed via `fetch`
+on the host side, enabling:
+
+- Host allowlists with wildcard support
+- Request/response hooks for logging and modification
+- Secret injection without exposing credentials to the guest
+- DNS rebinding protection
+
+```ts
+const { httpHooks, env } = createHttpHooks({
+  allowedHosts: ["api.example.com", "*.github.com"],
+  secrets: {
+    API_KEY: { hosts: ["api.example.com"], value: "secret" },
+  },
+  blockInternalRanges: true, // default: true
+  onRequest: async (req) => { console.log(req.url); return req; },
+  onResponse: async (req, res) => { console.log(res.status); return res; },
+});
+```
+
+## VFS Providers
+
+The VM exposes hookable VFS mounts:
+
+```ts
+import { VM, MemoryProvider, RealFSProvider, ReadonlyProvider } from "@earendil-works/gondolin";
+
+const vm = await VM.create({
+  vfs: {
+    mounts: {
+      "/": new MemoryProvider(),
+      "/data": new RealFSProvider("/host/data"),
+      "/config": new ReadonlyProvider(new RealFSProvider("/host/config")),
+    },
     hooks: {
       before: (ctx) => console.log("before", ctx.op, ctx.path),
       after: (ctx) => console.log("after", ctx.op, ctx.path),
     },
   },
 });
-
-const vfs = vm.getVfs();
 ```
 
-Use `fuseMount` in the `vfs` options to change the guest mount point (defaults to `/data`).
+## Asset Management
 
-## Running bash
+Guest images (kernel, initramfs, rootfs) are automatically downloaded from
+GitHub releases on first use. The default cache location is `~/.cache/gondolin/`.
 
-Launch an interactive bash session in the VM:
+Override the cache location:
+```bash
+export GONDOLIN_GUEST_DIR=/path/to/assets
+```
+
+Check asset status programmatically:
+```ts
+import { hasGuestAssets, ensureGuestAssets, getAssetDirectory } from "@earendil-works/gondolin";
+
+console.log("Assets available:", hasGuestAssets());
+console.log("Asset directory:", getAssetDirectory());
+
+// Download if needed
+const assets = await ensureGuestAssets();
+console.log("Kernel:", assets.kernelPath);
+```
+
+## Development
+
+When working in the gondolin repository, assets are loaded from
+`guest/image/out/` automatically if present.
 
 ```bash
-pnpm run bash
-```
+# Build the guest image
+cd guest && make image
 
-Programmatically via the `VM` class:
-
-```ts
-import { VM } from "./src/vm";
-
-const vm = new VM();
-await vm.shell(); // opens interactive bash, attached to stdin/stdout
-await vm.close();
-```
-
-## HTTP hooks
-
-Use `createHttpHooks` to configure network access with host allowlists and secret
-injection. Secrets are replaced in outgoing request headers only when sent to
-their allowed hosts:
-
-```ts
-import { VM } from "./src/vm";
-import { createHttpHooks } from "./src/http-hooks";
-
-const { httpHooks, env } = createHttpHooks({
-  // Only allow requests to these hosts (wildcards supported)
-  allowedHosts: ["api.example.com", "*.github.com"],
-
-  // Secrets are injected into request headers for matching hosts
-  secrets: {
-    GITHUB_TOKEN: {
-      hosts: ["api.github.com"],
-      value: process.env.GITHUB_TOKEN!,
-    },
-    API_KEY: {
-      hosts: ["api.example.com"],
-      value: "sk-secret-key",
-    },
-  },
-
-  // Block requests to internal/private IP ranges (default: true)
-  blockInternalRanges: true,
-
-  // Optional: custom request/response hooks
-  onRequest: async (request) => {
-    console.log("request:", request.method, request.url);
-    return request;
-  },
-  onResponse: async (request, response) => {
-    console.log("response:", response.status);
-    return response;
-  },
-});
-
-// The `env` object contains placeholder values for secrets.
-// Pass them to exec so guest code can use $GITHUB_TOKEN etc.
-// The actual secret is injected on the host when the request matches.
-const vm = new VM({ httpHooks, env });
-
-await vm.exec("curl -H 'Authorization: Bearer $GITHUB_TOKEN' https://api.github.com/user");
-
-await vm.close();
-```
-
-The secret placeholders prevent the real credentials from ever being visible
-inside the guest. The host intercepts HTTP requests and replaces the
-placeholder with the actual secret only if the target host matches.
-
-## Exploration Bash
-
-The `gondolin bash` command provides a quick way to explore the sandbox with
-configurable filesystem mounts and network access. This is useful for testing,
-debugging, and interactive exploration.
-
-### Basic Usage
-
-```bash
-# Start a basic bash session with default memory-backed VFS
+# Run development CLI
 pnpm run bash
 
-# Or via the CLI directly
-npx tsx bin/gondolin.ts bash
+# Run tests
+pnpm run test
 ```
 
-### Mounting Host Directories
+## Requirements
 
-Mount host directories into the sandbox using `--mount-hostfs`:
+- Node.js >= 18
+- QEMU (`qemu-system-aarch64` on ARM64, `qemu-system-x86_64` on x64)
+- macOS or Linux
 
-```bash
-# Mount a host directory read-write
-gondolin bash --mount-hostfs /home/user/project:/workspace
+## License
 
-# Mount read-only (append :ro)
-gondolin bash --mount-hostfs /data:/data:ro
-
-# Multiple mounts
-gondolin bash --mount-hostfs /src:/workspace --mount-hostfs /config:/etc/app:ro
-```
-
-The mount format follows Docker conventions: `HOST_PATH:GUEST_PATH[:ro]`
-
-### Memory-backed Mounts
-
-Create ephemeral memory-backed filesystems at specific paths using `--mount-memfs`:
-
-```bash
-# Create a memory-backed /tmp
-gondolin bash --mount-memfs /tmp
-
-# Combine with host mounts
-gondolin bash --mount-hostfs /data:/data:ro --mount-memfs /tmp --mount-memfs /scratch
-```
-
-### Network Access
-
-Control which hosts the sandbox can reach with `--allow-host`:
-
-```bash
-# Allow access to specific hosts
-gondolin bash --allow-host api.github.com --allow-host httpbin.org
-
-# Wildcards are supported
-gondolin bash --allow-host "*.example.com"
-```
-
-### Secret Injection
-
-Inject secrets that are only sent to specific hosts using `--host-secret`:
-
-```bash
-# Read secret from environment variable $GITHUB_TOKEN
-gondolin bash --allow-host api.github.com --host-secret GITHUB_TOKEN@api.github.com
-
-# Explicit secret value
-gondolin bash --host-secret API_KEY@api.example.com=sk-secret-key
-
-# Multiple hosts for one secret
-gondolin bash --host-secret TOKEN@api.example.com,staging.example.com
-```
-
-The secret format is: `NAME@HOST[,HOST...][=VALUE]`
-- If `=VALUE` is omitted, the value is read from the environment variable `$NAME`
-- The secret is injected into HTTP headers only when requests match the specified hosts
-- The actual secret value never enters the guest; only a placeholder is visible
-
-### Combined Example
-
-```bash
-# Full development setup:
-# - Mount project directory read-write
-# - Mount dependencies read-only  
-# - Ephemeral temp directory
-# - Allow GitHub API with token from environment
-gondolin bash \
-  --mount-hostfs ~/project:/workspace \
-  --mount-hostfs ~/.npm:/root/.npm:ro \
-  --mount-memfs /tmp \
-  --allow-host api.github.com \
-  --host-secret GITHUB_TOKEN@api.github.com
-```
-
-### Using with exec
-
-The same options work with `gondolin exec` for non-interactive commands:
-
-```bash
-# Run a command with mounted filesystem
-gondolin exec --mount-hostfs /src:/workspace -- ls -la /workspace
-
-# Build with network access
-gondolin exec \
-  --mount-hostfs ~/project:/workspace \
-  --allow-host registry.npmjs.org \
-  -- sh -c "cd /workspace && npm install"
-```
-
-## Useful commands
-- `pnpm run dev:ws -- --net-debug` to start the WS server with network debug logging.
-- `GONDOLIN_DEBUG=net pnpm run dev:ws` to enable the same logging via env (comma separated).
-- `pnpm run test:ws` to run the guest HTTP/HTTPS fetch test via WS.
-- `pnpm run bash` to launch a quick interactive Bash session against the VM.
+MIT

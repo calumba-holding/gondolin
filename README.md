@@ -5,6 +5,19 @@ focuses on a QEMU-based micro-VM with a tiny guest supervisor, a virtio-serial
 RPC, and a JavaScript based host control plane that enforces filesystem and
 network policy.
 
+## Quick Start (NPM)
+
+```bash
+# Run an interactive bash session in the sandbox
+npx @earendil-works/gondolin bash
+
+# Or install globally
+npm install -g @earendil-works/gondolin
+gondolin bash
+```
+
+Guest images are automatically downloaded from GitHub releases on first run.
+
 ## Motivation
 
 We want to have a strong sandbox with a good security boundary that allows
@@ -58,15 +71,13 @@ Our goals:
 - [`guest/`](guest/) — Zig-based `sandboxd` daemon, Alpine initramfs build, and QEMU helpers.
 - [`host/`](host/) — TypeScript host controller + WebSocket server that works with the guest.
 
-## Quick Start
+## Library Usage
 
 The host controller lets you spin up a sandboxed VM with controlled filesystem
 and network access. Here's a minimal example that shows some of the power:
 
 ```ts
-import { VM } from "./host/src/vm";
-import { MemoryProvider } from "./host/src/vfs";
-import { createHttpHooks } from "./host/src/http-hooks";
+import { VM, MemoryProvider, createHttpHooks } from "@earendil-works/gondolin";
 
 // Set up network policy with secret injection
 const { httpHooks, env } = createHttpHooks({
@@ -80,7 +91,8 @@ const { httpHooks, env } = createHttpHooks({
 });
 
 // Create VM with in-memory filesystem and network hooks
-const vm = new VM({
+// Use VM.create() to auto-download guest assets if needed
+const vm = await VM.create({
   httpHooks,
   env,
   vfs: {
@@ -97,3 +109,37 @@ The guest never sees real credentials because the host intercepts outgoing
 requests and injects secrets only for matching hosts.  See
 [`host/README.md`](host/README.md) for full details on HTTP hooks, VFS mounts,
 and the network stack.
+
+## Requirements
+
+**Note:** Currently only ARM64 (Apple Silicon, Linux aarch64) is tested. x86_64
+support exists in the code but is untested.
+
+These are required to use Gondolin. The guest image (kernel, initramfs, rootfs)
+is automatically downloaded from GitHub releases on first run.
+
+**macOS (Homebrew):**
+
+```bash
+brew install qemu node
+```
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo apt install qemu-system-arm nodejs npm
+```
+
+These are only needed if you want to build the guest image from source:
+
+**macOS (Homebrew):**
+
+```bash
+brew install zig lz4 e2fsprogs
+```
+
+**Linux (Debian/Ubuntu):**
+
+```bash
+sudo apt install zig lz4 cpio curl e2fsprogs
+```

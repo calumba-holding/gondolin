@@ -9,7 +9,12 @@ import {
   decodeOutputFrame,
   SandboxPolicy,
 } from "./ws-protocol";
-import { SandboxWsServer, SandboxWsServerOptions } from "./sandbox-ws-server";
+import {
+  SandboxWsServer,
+  SandboxWsServerOptions,
+  resolveSandboxWsServerOptionsAsync,
+  type ResolvedServerOptions,
+} from "./sandbox-ws-server";
 import type { SandboxState } from "./sandbox-controller";
 import type { HttpFetch, HttpHooks } from "./qemu-net";
 import {
@@ -92,12 +97,15 @@ export type ShellOptions = {
 // Re-export types from exec.ts
 export { ExecProcess, ExecResult, ExecOptions } from "./exec";
 
+export type VMState = SandboxState | "unknown";
+
 export class VM {
   private readonly token?: string;
   private readonly autoStart: boolean;
-  private readonly server: SandboxWsServer | null;
+  private server: SandboxWsServer | null;
   private readonly defaultEnv: EnvInput | undefined;
   private url: string | null;
+  private resolvedServerOptions: ResolvedServerOptions | null = null;
   private ws: WebSocket | null = null;
   private connectPromise: Promise<void> | null = null;
   private startPromise: Promise<void> | null = null;
@@ -120,7 +128,61 @@ export class VM {
   private bootSent = false;
   private vfsReadyPromise: Promise<void> | null = null;
 
-  constructor(options: VMOptions = {}) {
+  /**
+   * Create a VM instance, downloading guest assets if needed.
+   *
+   * This is the recommended way to create a VM in production, as it will
+   * automatically download the guest image if it's not available locally.
+   *
+   * @param options VM configuration options
+   * @returns A configured VM instance
+   */
+  static async create(options: VMOptions = {}): Promise<VM> {
+    // If connecting to remote URL, no need to resolve assets
+    if (options.url) {
+      return new VM(options);
+    }
+
+    // Resolve server options with async asset fetching
+    const serverOptions: SandboxWsServerOptions = { ...options.server };
+
+    // Build the combined server options
+    if (options.fetch && serverOptions.fetch === undefined) {
+      serverOptions.fetch = options.fetch;
+    }
+    if (options.httpHooks && serverOptions.httpHooks === undefined) {
+      serverOptions.httpHooks = options.httpHooks;
+    }
+    if (serverOptions.host === undefined) serverOptions.host = "127.0.0.1";
+    if (serverOptions.port === undefined) serverOptions.port = 0;
+    if (options.policy && serverOptions.policy === undefined) {
+      serverOptions.policy = options.policy;
+    }
+    if (options.memory && serverOptions.memory === undefined) {
+      serverOptions.memory = options.memory;
+    }
+    if (options.cpus && serverOptions.cpus === undefined) {
+      serverOptions.cpus = options.cpus;
+    }
+
+    // Resolve options with asset fetching
+    const resolvedServerOptions = await resolveSandboxWsServerOptionsAsync(serverOptions);
+
+    // Create VM with pre-resolved options
+    return new VM(options, resolvedServerOptions);
+  }
+
+  /**
+   * Create a VM instance synchronously.
+   *
+   * This constructor requires that guest assets are available locally (either
+   * in a development checkout or via GONDOLIN_GUEST_DIR). For automatic asset
+   * downloading, use the async `VM.create()` factory instead.
+   *
+   * @param options VM configuration options
+   * @param resolvedServerOptions Optional pre-resolved server options (from VM.create())
+   */
+  constructor(options: VMOptions = {}, resolvedServerOptions?: ResolvedServerOptions) {
     if (options.url && options.server) {
       throw new Error("VM cannot specify both url and server options");
     }
@@ -176,7 +238,16 @@ export class VM {
       serverOptions.netDebug = netDebug;
     }
 
-    this.server = new SandboxWsServer(serverOptions);
+    // Handle VFS in resolved options
+    if (resolvedServerOptions) {
+      // Merge VFS provider into resolved options
+      if (this.vfs) {
+        (resolvedServerOptions as any).vfsProvider = this.vfs;
+      }
+      this.server = new SandboxWsServer(resolvedServerOptions);
+    } else {
+      this.server = new SandboxWsServer(serverOptions);
+    }
     if (netDebug) {
       this.server.on("log", (message: string) => {
         process.stderr.write(formatLog(message));

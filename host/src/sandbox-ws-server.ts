@@ -33,6 +33,7 @@ import type { HttpFetch, HttpHooks } from "./qemu-net";
 import type { SandboxPolicy } from "./policy";
 import { FsRpcService, SandboxVfsProvider, type VirtualProvider } from "./vfs";
 import { parseDebugEnv } from "./debug";
+import { ensureGuestAssets, hasGuestAssets, type GuestAssets } from "./assets";
 
 const MAX_REQUEST_ID = 0xffffffff;
 const DEFAULT_MAX_JSON_BYTES = 256 * 1024;
@@ -80,7 +81,7 @@ type SandboxFsConfig = {
   fuseBinds: string[];
 };
 
-type ResolvedServerOptions = {
+export type ResolvedServerOptions = {
   host: string;
   port: number;
   qemuPath: string;
@@ -110,13 +111,50 @@ type ResolvedServerOptions = {
   vfsProvider: VirtualProvider | null;
 };
 
+/**
+ * Get default guest asset paths from local development checkout.
+ * Returns undefined for each path if not found locally.
+ */
+function getLocalGuestAssets(): Partial<GuestAssets> {
+  // From dist/src/, we need to go up to host/ then up to repo root
+  const packageRoot = path.resolve(__dirname, "../..");
+  const devPath = path.join(packageRoot, "..", "guest", "image", "out");
+
+  const kernelPath = path.join(devPath, "vmlinuz-virt");
+  const initrdPath = path.join(devPath, "initramfs.cpio.lz4");
+  const rootfsPath = path.join(devPath, "rootfs.ext4");
+
+  // Check if local dev paths exist
+  if (
+    fs.existsSync(kernelPath) &&
+    fs.existsSync(initrdPath) &&
+    fs.existsSync(rootfsPath)
+  ) {
+    return { kernelPath, initrdPath, rootfsPath };
+  }
+
+  return {};
+}
+
+/**
+ * Resolve server options synchronously.
+ *
+ * This version uses local development paths if available. For production use,
+ * prefer `resolveSandboxWsServerOptionsAsync` which will download assets if needed.
+ *
+ * @param options User-provided options
+ * @param assets Optional pre-resolved guest assets (from ensureGuestAssets)
+ */
 export function resolveSandboxWsServerOptions(
-  options: SandboxWsServerOptions = {}
+  options: SandboxWsServerOptions = {},
+  assets?: GuestAssets
 ): ResolvedServerOptions {
-  const repoRoot = path.resolve(__dirname, "../..");
-  const defaultKernel = path.resolve(repoRoot, "guest/image/out/vmlinuz-virt");
-  const defaultInitrd = path.resolve(repoRoot, "guest/image/out/initramfs.cpio.lz4");
-  const defaultRootfs = path.resolve(repoRoot, "guest/image/out/rootfs.ext4");
+  // Try local dev paths if no assets provided
+  const localAssets = assets ?? getLocalGuestAssets();
+  const defaultKernel = localAssets.kernelPath;
+  const defaultInitrd = localAssets.initrdPath;
+  const defaultRootfs = localAssets.rootfsPath;
+
   // we are running into length limits on macos on the default temp dir
   const tmpDir = process.platform === "darwin" ? "/tmp" : os.tmpdir();
   const defaultVirtio = path.resolve(
@@ -138,13 +176,28 @@ export function resolveSandboxWsServerOptions(
   const defaultMemory = "1G";
   const debugFlags = parseDebugEnv();
 
+  // If no kernel path can be determined, we'll need to fetch assets later
+  const kernelPath = options.kernelPath ?? defaultKernel;
+  const initrdPath = options.initrdPath ?? defaultInitrd;
+  const rootfsPath = options.rootfsPath ?? defaultRootfs;
+
+  if (!kernelPath || !initrdPath || !rootfsPath) {
+    throw new Error(
+      "Guest assets not found. Either:\n" +
+      "  1. Run from the gondolin repository with built guest images\n" +
+      "  2. Use SandboxWsServer.create() to auto-download assets\n" +
+      "  3. Explicitly provide kernelPath, initrdPath, and rootfsPath options\n" +
+      "  4. Set GONDOLIN_GUEST_DIR to a directory containing the assets"
+    );
+  }
+
   return {
     host: options.host ?? "127.0.0.1",
     port: options.port ?? 8080,
     qemuPath: options.qemuPath ?? defaultQemu,
-    kernelPath: options.kernelPath ?? defaultKernel,
-    initrdPath: options.initrdPath ?? defaultInitrd,
-    rootfsPath: options.rootfsPath ?? defaultRootfs,
+    kernelPath,
+    initrdPath,
+    rootfsPath,
     memory: options.memory ?? defaultMemory,
     cpus: options.cpus ?? 2,
     virtioSocketPath: options.virtioSocketPath ?? defaultVirtio,
@@ -167,6 +220,30 @@ export function resolveSandboxWsServerOptions(
     httpHooks: options.httpHooks,
     vfsProvider: options.vfsProvider ?? null,
   };
+}
+
+/**
+ * Resolve server options asynchronously, downloading guest assets if needed.
+ *
+ * This is the recommended way to get resolved options for production use.
+ */
+export async function resolveSandboxWsServerOptionsAsync(
+  options: SandboxWsServerOptions = {}
+): Promise<ResolvedServerOptions> {
+  // If all paths are explicitly provided, use sync version
+  if (options.kernelPath && options.initrdPath && options.rootfsPath) {
+    return resolveSandboxWsServerOptions(options);
+  }
+
+  // Check for local dev paths first
+  const localAssets = getLocalGuestAssets();
+  if (localAssets.kernelPath && localAssets.initrdPath && localAssets.rootfsPath) {
+    return resolveSandboxWsServerOptions(options, localAssets as GuestAssets);
+  }
+
+  // Download assets if needed
+  const assets = await ensureGuestAssets();
+  return resolveSandboxWsServerOptions(options, assets);
 }
 
 let cachedHostArch: string | null = null;
@@ -480,13 +557,42 @@ export class SandboxWsServer extends EventEmitter {
   private bootConfig: SandboxFsConfig | null = null;
   private activeClient: WebSocket | null = null;
 
-  constructor(options: SandboxWsServerOptions = {}) {
+  /**
+   * Create a SandboxWsServer, downloading guest assets if needed.
+   *
+   * This is the recommended way to create a server in production, as it will
+   * automatically download the guest image if it's not available locally.
+   *
+   * @param options Server configuration options
+   * @returns A configured SandboxWsServer instance
+   */
+  static async create(options: SandboxWsServerOptions = {}): Promise<SandboxWsServer> {
+    const resolvedOptions = await resolveSandboxWsServerOptionsAsync(options);
+    return new SandboxWsServer(resolvedOptions);
+  }
+
+  /**
+   * Create a SandboxWsServer synchronously.
+   *
+   * This constructor requires that guest assets are available locally (either
+   * in a development checkout or via GONDOLIN_GUEST_DIR). For automatic asset
+   * downloading, use the async `SandboxWsServer.create()` factory instead.
+   *
+   * @param options Server configuration options (or pre-resolved options)
+   */
+  constructor(options: SandboxWsServerOptions | ResolvedServerOptions = {}) {
     super();
     this.on("error", (err) => {
       const message = err instanceof Error ? err.message : String(err);
       this.emit("log", `[error] ${message}`);
     });
-    this.options = resolveSandboxWsServerOptions(options);
+    // Detect if we received pre-resolved options (from static create())
+    // by checking for a field that's required in resolved but computed in unresolved
+    const isResolved = "maxJsonBytes" in options && "maxStdinBytes" in options &&
+      typeof options.maxJsonBytes === "number" && typeof options.maxStdinBytes === "number";
+    this.options = isResolved
+      ? (options as ResolvedServerOptions)
+      : resolveSandboxWsServerOptions(options as SandboxWsServerOptions);
     this.policy = this.options.policy;
     this.vfsProvider = this.options.vfsProvider
       ? this.options.vfsProvider instanceof SandboxVfsProvider
