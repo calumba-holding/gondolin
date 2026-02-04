@@ -30,6 +30,13 @@ point for policy enforcement, logging, and request/response hooks without
 granting the guest arbitrary socket access or requiring privileged host network
 setup.
 
+**Note on redirects:** Because requests are proxied via `fetch` on the host,
+HTTP redirects are followed and resolved on the host side before the response
+is returned to the guest. This means tools like `curl` inside the guest will
+receive the final response directly and won't observe intermediate redirect
+responses (e.g., 301, 302, 307). The guest sees the request as if no redirect
+occurred.
+
 ## Filesystem hooks
 
 `VM` can expose hookable VFS mounts (defaults to `MemoryProvider` at `/`). Pass
