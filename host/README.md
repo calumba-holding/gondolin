@@ -81,6 +81,8 @@ await vm.close();
 - **VFS mounts** with hookable providers (memory, real filesystem, read-only)
 - **Secret injection** that never exposes credentials inside the guest
 
+> **Note:** The secret-hiding strategy is inspired by [Deno Sandbox](https://deno.com/blog/introducing-deno-sandbox#secrets-that-cant-be-stolen).
+
 ## CLI Commands
 
 ### gondolin bash
