@@ -448,6 +448,10 @@ export class SandboxWsServer extends EventEmitter {
 
   constructor(options: SandboxWsServerOptions = {}) {
     super();
+    this.on("error", (err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.emit("log", `[error] ${message}`);
+    });
     this.options = resolveSandboxWsServerOptions(options);
     this.policy = this.options.policy;
     this.vfsProvider = this.options.vfsProvider
