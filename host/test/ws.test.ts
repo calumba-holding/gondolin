@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { VM } from "../src/vm";
 import { HttpRequestBlockedError } from "../src/qemu-net";
+import { createHttpHooks } from "../src/http-hooks";
 
 const url = process.env.WS_URL;
 const timeoutMs = Number(process.env.WS_TIMEOUT ?? 15000);
@@ -197,6 +198,81 @@ test("ws isAllowed blocks private ipv4", { timeout: timeoutMs, skip: Boolean(url
     assert.equal(output[privateIndex + 1], "HTTP 403");
     assert.ok(seenIps.includes("192.168.127.1"), `missing 192.168.127.1 in isAllowed: ${seenIps.join(", ")}`);
     assert.ok(seenIps.includes("10.0.0.1"), `missing 10.0.0.1 in isAllowed: ${seenIps.join(", ")}`);
+  } finally {
+    await vm.stop();
+  }
+});
+
+
+test("ws redirect blocks secret leakage", { timeout: timeoutMs, skip: Boolean(url) }, async () => {
+  const secretValue = "sk-test-secret";
+  const requests: Array<{ url: string; auth: string | null }> = [];
+
+  const fetchStub: typeof fetch = async (input, init) => {
+    const urlString =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    const headers = new Headers(init?.headers ?? (typeof input === "object" ? input.headers : undefined));
+    const auth = headers.get("authorization");
+    requests.push({ url: urlString, auth });
+
+    if (urlString.startsWith("http://example.com")) {
+      return new Response(null, {
+        status: 302,
+        headers: { location: "http://example.org/next" },
+      });
+    }
+
+    if (urlString.startsWith("http://example.org")) {
+      return new Response("OK", { status: 200 });
+    }
+
+    return new Response("Unexpected", { status: 500 });
+  };
+
+  const { httpHooks, env } = createHttpHooks({
+    allowedHosts: ["example.com", "example.org"],
+    secrets: {
+      API_KEY: {
+        hosts: ["example.com"],
+        value: secretValue,
+      },
+    },
+  });
+
+  const vm = new VM({
+    token: token ?? undefined,
+    fetch: fetchStub,
+    httpHooks,
+    env,
+  });
+
+  try {
+    const script = [
+      "import os",
+      "import urllib.request, urllib.error",
+      "def fetch(url):",
+      "    try:",
+      "        req = urllib.request.Request(url)",
+      "        req.add_header('Authorization', 'Bearer ' + (os.environ.get('API_KEY') or ''))",
+      "        return urllib.request.urlopen(req, timeout=5).read().decode('utf-8', 'ignore')",
+      "    except urllib.error.HTTPError as e:",
+      "        return f'HTTP {e.code}'",
+      "    except Exception as e:",
+      "        return f'ERROR {type(e).__name__}'",
+      "print(fetch('http://example.com/start'))",
+    ].join("\n");
+
+    const result = await withTimeout(vm.exec(["python3", "-c", script]), timeoutMs);
+
+    assert.equal(result.exitCode, 0, result.stderr.trim() || undefined);
+    assert.equal(result.stdout.trim(), "HTTP 403");
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].url, "http://example.com/start");
+    assert.equal(requests[0].auth, `Bearer ${secretValue}`);
   } finally {
     await vm.stop();
   }

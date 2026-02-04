@@ -84,8 +84,8 @@ export class ExecResult {
 export type ExecOptions = {
   /** Additional arguments (when command is a string) */
   argv?: string[];
-  /** Environment variables in KEY=VALUE format */
-  env?: string[];
+  /** Environment variables */
+  env?: string[] | Record<string, string>;
   /** Working directory */
   cwd?: string;
   /** 

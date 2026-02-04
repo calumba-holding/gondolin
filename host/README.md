@@ -9,7 +9,7 @@ VM.
 - A WebSocket server exposes an exec API (stdin/pty + streaming stdout/stderr) that the CLI and `VM` client use.
 - The host runs a **TypeScript network stack** (`NetworkStack`) that implements Ethernet framing, ARP, IPv4, ICMP, DHCP, TCP, and UDP.
 - TCP flows are classified; only HTTP and TLS are accepted (CONNECT is rejected). Other TCP traffic is dropped.
-- HTTP/HTTPS requests are terminated on the host and bridged via `fetch`, with optional request/response hooks.
+- HTTP/HTTPS requests are terminated on the host and bridged via `fetch` (undici) with optional request/response hooks and DNS-rebind-safe allowlist checks.
 - TLS MITM is implemented: a local CA + per-host leaf certs are generated under `var/mitm` and used to re-encrypt TLS.
 - UDP forwarding is limited to DNS (port 53). The guest still points at `8.8.8.8` by default.
 - A WS test (`pnpm run test:ws`) exercises guest HTTP/HTTPS fetches against icanhazip.com.
@@ -54,6 +54,78 @@ const vfs = vm.getVfs();
 ```
 
 Use `fuseMount` in the `vfs` options to change the guest mount point (defaults to `/data`).
+
+## Running bash
+
+Launch an interactive bash session in the VM:
+
+```bash
+pnpm run bash
+```
+
+Programmatically via the `VM` class:
+
+```ts
+import { VM } from "./src/vm";
+
+const vm = new VM();
+await vm.shell(); // opens interactive bash, attached to stdin/stdout
+await vm.close();
+```
+
+## HTTP hooks
+
+Use `createHttpHooks` to configure network access with host allowlists and secret
+injection. Secrets are replaced in outgoing request headers only when sent to
+their allowed hosts:
+
+```ts
+import { VM } from "./src/vm";
+import { createHttpHooks } from "./src/http-hooks";
+
+const { httpHooks, env } = createHttpHooks({
+  // Only allow requests to these hosts (wildcards supported)
+  allowedHosts: ["api.example.com", "*.github.com"],
+
+  // Secrets are injected into request headers for matching hosts
+  secrets: {
+    GITHUB_TOKEN: {
+      hosts: ["api.github.com"],
+      value: process.env.GITHUB_TOKEN!,
+    },
+    API_KEY: {
+      hosts: ["api.example.com"],
+      value: "sk-secret-key",
+    },
+  },
+
+  // Block requests to internal/private IP ranges (default: true)
+  blockInternalRanges: true,
+
+  // Optional: custom request/response hooks
+  onRequest: async (request) => {
+    console.log("request:", request.method, request.url);
+    return request;
+  },
+  onResponse: async (request, response) => {
+    console.log("response:", response.status);
+    return response;
+  },
+});
+
+// The `env` object contains placeholder values for secrets.
+// Pass them to exec so guest code can use $GITHUB_TOKEN etc.
+// The actual secret is injected on the host when the request matches.
+const vm = new VM({ httpHooks, env });
+
+await vm.exec("curl -H 'Authorization: Bearer $GITHUB_TOKEN' https://api.github.com/user");
+
+await vm.close();
+```
+
+The secret placeholders prevent the real credentials from ever being visible
+inside the guest. The host intercepts HTTP requests and replaces the
+placeholder with the actual secret only if the target host matches.
 
 ## Useful commands
 - `pnpm run dev:ws -- --net-debug` to start the WS server with network debug logging.

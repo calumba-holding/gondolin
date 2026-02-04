@@ -5,9 +5,16 @@ import path from "path";
 import dgram from "dgram";
 import tls from "tls";
 import crypto from "crypto";
+import dns from "dns";
 import { Duplex } from "stream";
+import type { ReadableStream as WebReadableStream } from "stream/web";
 import { execFileSync } from "child_process";
 import { lookup } from "dns/promises";
+import { Agent, fetch as undiciFetch } from "undici";
+
+const MAX_HTTP_REDIRECTS = 10;
+
+type FetchResponse = Awaited<ReturnType<typeof undiciFetch>>;
 
 import {
   NetworkStack,
@@ -93,7 +100,7 @@ type TcpSession = {
   tls?: TlsSession;
 };
 
-export type HttpFetch = typeof fetch;
+export type HttpFetch = typeof undiciFetch;
 
 export type HttpHookRequest = {
   method: string;
@@ -740,114 +747,134 @@ export class QemuNetworkBackend extends EventEmitter {
       body: request.body.length > 0 ? request.body : null,
     };
 
-    if (this.options.httpHooks?.onRequest) {
-      const updated = await this.options.httpHooks.onRequest(hookRequest);
-      if (updated) hookRequest = updated;
-    }
+    const fetcher = this.options.fetch ?? undiciFetch;
+    let pendingRequest = hookRequest;
 
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(hookRequest.url);
-    } catch {
-      this.respondWithError(write, 400, "Bad Request");
-      return;
-    }
+    for (let redirectCount = 0; redirectCount <= MAX_HTTP_REDIRECTS; redirectCount += 1) {
+      const currentRequest = await this.applyRequestHooks(pendingRequest);
 
-    const protocol = parsedUrl.protocol === "https:" ? "https" : parsedUrl.protocol === "http:" ? "http" : null;
-    if (!protocol) {
-      this.respondWithError(write, 400, "Bad Request");
-      return;
-    }
-
-    const port = parsedUrl.port
-      ? Number(parsedUrl.port)
-      : protocol === "https"
-        ? 443
-        : 80;
-    if (!Number.isFinite(port) || port <= 0) {
-      this.respondWithError(write, 400, "Bad Request");
-      return;
-    }
-
-    if (this.options.httpHooks?.isAllowed) {
-      const { address, family } = await this.resolveHostname(parsedUrl.hostname);
-      const allowed = await this.options.httpHooks.isAllowed({
-        hostname: parsedUrl.hostname,
-        ip: address,
-        family,
-        port,
-        protocol,
-      });
-      if (!allowed) {
-        throw new HttpRequestBlockedError(`blocked by policy: ${parsedUrl.hostname}`);
+      let currentUrl: URL;
+      try {
+        currentUrl = new URL(currentRequest.url);
+      } catch {
+        this.respondWithError(write, 400, "Bad Request");
+        return;
       }
-    }
 
-    const fetcher = this.options.fetch ?? fetch;
-    const response = await fetcher(hookRequest.url, {
-      method: hookRequest.method,
-      headers: hookRequest.headers,
-      body: hookRequest.body ? new Uint8Array(hookRequest.body) : undefined,
-    });
+      const protocol = getUrlProtocol(currentUrl);
+      if (!protocol) {
+        this.respondWithError(write, 400, "Bad Request");
+        return;
+      }
 
-    if (this.options.debug) {
-      this.emit("log", `[net] http bridge response ${response.status} ${response.statusText}`);
-    }
+      const port = getUrlPort(currentUrl, protocol);
+      if (!Number.isFinite(port) || port <= 0) {
+        this.respondWithError(write, 400, "Bad Request");
+        return;
+      }
 
-    let responseHeaders = this.stripHopByHopHeaders(this.headersToRecord(response.headers));
-    const contentEncoding = responseHeaders["content-encoding"];
-    const contentLength = responseHeaders["content-length"];
-    const parsedLength = contentLength ? Number(contentLength) : null;
-    const hasValidLength =
-      parsedLength !== null && Number.isFinite(parsedLength) && parsedLength >= 0;
+      await this.ensureRequestAllowed(currentUrl, protocol, port);
 
-    if (contentEncoding) {
-      delete responseHeaders["content-encoding"];
-      delete responseHeaders["content-length"];
-    }
-    responseHeaders["connection"] = "close";
+      const useDefaultFetch = this.options.fetch === undefined;
+      // The custom dispatcher re-checks isAllowed against the resolved IP to
+      // prevent DNS rebinding from bypassing internal range policies.
+      const dispatcher = useDefaultFetch
+        ? this.createCheckedDispatcher({
+            hostname: currentUrl.hostname,
+            port,
+            protocol,
+          })
+        : null;
 
-    const responseBodyStream = response.body;
-    const canStream = Boolean(responseBodyStream) && !this.options.httpHooks?.onResponse;
+      try {
+        const response = await fetcher(currentUrl.toString(), {
+          method: currentRequest.method,
+          headers: currentRequest.headers,
+          body: currentRequest.body ? new Uint8Array(currentRequest.body) : undefined,
+          redirect: "manual",
+          ...(dispatcher ? { dispatcher } : {}),
+        });
 
-    if (canStream && responseBodyStream) {
-      if (contentEncoding || !hasValidLength) {
-        delete responseHeaders["content-length"];
-        responseHeaders["transfer-encoding"] = "chunked";
-        this.sendHttpResponseHead(write, {
+        const redirectUrl = getRedirectUrl(response, currentUrl);
+        if (redirectUrl) {
+          if (response.body) {
+            await response.body.cancel();
+          }
+
+          if (redirectCount >= MAX_HTTP_REDIRECTS) {
+            throw new HttpRequestBlockedError("too many redirects", 508, "Loop Detected");
+          }
+
+          pendingRequest = applyRedirectRequest(pendingRequest, response.status, redirectUrl);
+          continue;
+        }
+
+        if (this.options.debug) {
+          this.emit("log", `[net] http bridge response ${response.status} ${response.statusText}`);
+        }
+
+        let responseHeaders = this.stripHopByHopHeaders(this.headersToRecord(response.headers));
+        const contentEncoding = responseHeaders["content-encoding"];
+        const contentLength = responseHeaders["content-length"];
+        const parsedLength = contentLength ? Number(contentLength) : null;
+        const hasValidLength =
+          parsedLength !== null && Number.isFinite(parsedLength) && parsedLength >= 0;
+
+        if (contentEncoding) {
+          delete responseHeaders["content-encoding"];
+          delete responseHeaders["content-length"];
+        }
+        responseHeaders["connection"] = "close";
+
+        const responseBodyStream = response.body as WebReadableStream<Uint8Array> | null;
+        const canStream = Boolean(responseBodyStream) && !this.options.httpHooks?.onResponse;
+
+        if (canStream && responseBodyStream) {
+          if (contentEncoding || !hasValidLength) {
+            delete responseHeaders["content-length"];
+            responseHeaders["transfer-encoding"] = "chunked";
+            this.sendHttpResponseHead(write, {
+              status: response.status,
+              statusText: response.statusText || "OK",
+              headers: responseHeaders,
+            });
+            await this.sendChunkedBody(responseBodyStream, write);
+          } else {
+            responseHeaders["content-length"] = parsedLength.toString();
+            this.sendHttpResponseHead(write, {
+              status: response.status,
+              statusText: response.statusText || "OK",
+              headers: responseHeaders,
+            });
+            await this.sendStreamBody(responseBodyStream, write);
+          }
+          return;
+        }
+
+        const responseBody = Buffer.from(await response.arrayBuffer());
+        responseHeaders["content-length"] = responseBody.length.toString();
+
+        let hookResponse: HttpHookResponse = {
           status: response.status,
           statusText: response.statusText || "OK",
           headers: responseHeaders,
-        });
-        await this.sendChunkedBody(responseBodyStream, write);
-      } else {
-        responseHeaders["content-length"] = parsedLength.toString();
-        this.sendHttpResponseHead(write, {
-          status: response.status,
-          statusText: response.statusText || "OK",
-          headers: responseHeaders,
-        });
-        await this.sendStreamBody(responseBodyStream, write);
+          body: responseBody,
+        };
+
+        if (this.options.httpHooks?.onResponse) {
+          const updated = await this.options.httpHooks.onResponse(hookResponse, currentRequest);
+          if (updated) hookResponse = updated;
+        }
+
+        this.sendHttpResponse(write, hookResponse);
+        return;
+      } finally {
+        if (dispatcher) {
+          dispatcher.close();
+        }
       }
-      return;
     }
 
-    const responseBody = Buffer.from(await response.arrayBuffer());
-    responseHeaders["content-length"] = responseBody.length.toString();
-
-    let hookResponse: HttpHookResponse = {
-      status: response.status,
-      statusText: response.statusText || "OK",
-      headers: responseHeaders,
-      body: responseBody,
-    };
-
-    if (this.options.httpHooks?.onResponse) {
-      const updated = await this.options.httpHooks.onResponse(hookResponse, hookRequest);
-      if (updated) hookResponse = updated;
-    }
-
-    this.sendHttpResponse(write, hookResponse);
   }
 
   private sendHttpResponseHead(
@@ -869,7 +896,7 @@ export class QemuNetworkBackend extends EventEmitter {
     }
   }
 
-  private async sendChunkedBody(body: ReadableStream<Uint8Array>, write: (chunk: Buffer) => void) {
+  private async sendChunkedBody(body: WebReadableStream<Uint8Array>, write: (chunk: Buffer) => void) {
     const reader = body.getReader();
     try {
       while (true) {
@@ -888,7 +915,7 @@ export class QemuNetworkBackend extends EventEmitter {
     write(Buffer.from("0\r\n\r\n"));
   }
 
-  private async sendStreamBody(body: ReadableStream<Uint8Array>, write: (chunk: Buffer) => void) {
+  private async sendStreamBody(body: WebReadableStream<Uint8Array>, write: (chunk: Buffer) => void) {
     const reader = body.getReader();
     try {
       while (true) {
@@ -932,6 +959,51 @@ export class QemuNetworkBackend extends EventEmitter {
     }
     const result = await lookup(hostname);
     return { address: result.address, family: result.family as 4 | 6 };
+  }
+
+  private async ensureRequestAllowed(
+    parsedUrl: URL,
+    protocol: "http" | "https",
+    port: number
+  ) {
+    if (!this.options.httpHooks?.isAllowed) return;
+    const { address, family } = await this.resolveHostname(parsedUrl.hostname);
+    const allowed = await this.options.httpHooks.isAllowed({
+      hostname: parsedUrl.hostname,
+      ip: address,
+      family,
+      port,
+      protocol,
+    });
+    if (!allowed) {
+      throw new HttpRequestBlockedError(`blocked by policy: ${parsedUrl.hostname}`);
+    }
+  }
+
+  private async applyRequestHooks(request: HttpHookRequest): Promise<HttpHookRequest> {
+    if (!this.options.httpHooks?.onRequest) {
+      return request;
+    }
+    const cloned: HttpHookRequest = {
+      method: request.method,
+      url: request.url,
+      headers: { ...request.headers },
+      body: request.body,
+    };
+    const updated = await this.options.httpHooks.onRequest(cloned);
+    return updated ?? cloned;
+  }
+
+  private createCheckedDispatcher(info: {
+    hostname: string;
+    port: number;
+    protocol: "http" | "https";
+  }): Agent | null {
+    const isAllowed = this.options.httpHooks?.isAllowed;
+    if (!isAllowed) return null;
+
+    const lookupFn = createLookupGuard(info, isAllowed);
+    return new Agent({ connect: { lookup: lookupFn } });
   }
 
   private getMitmDir() {
@@ -1106,4 +1178,167 @@ export class QemuNetworkBackend extends EventEmitter {
     });
     return record;
   }
+}
+
+type LookupEntry = {
+  address: string;
+  family: 4 | 6;
+};
+
+type LookupResult = string | dns.LookupAddress[];
+
+type LookupCallback = (
+  err: NodeJS.ErrnoException | null,
+  address: LookupResult,
+  family?: number
+) => void;
+
+function createLookupGuard(
+  info: { hostname: string; port: number; protocol: "http" | "https" },
+  isAllowed: NonNullable<HttpHooks["isAllowed"]>
+) {
+  return (
+    hostname: string,
+    options: dns.LookupOneOptions | dns.LookupAllOptions | number,
+    callback: LookupCallback
+  ) => {
+    const normalizedOptions = normalizeLookupOptions(options);
+    dns.lookup(hostname, normalizedOptions, (err, address, family) => {
+      if (err) {
+        callback(err, normalizeLookupFailure(normalizedOptions));
+        return;
+      }
+
+      void (async () => {
+        const entries = normalizeLookupEntries(address, family);
+        if (entries.length === 0) {
+          callback(new Error("DNS lookup returned no addresses"), normalizeLookupFailure(normalizedOptions));
+          return;
+        }
+
+        const allowedEntries: LookupEntry[] = [];
+        for (const entry of entries) {
+          const allowed = await isAllowed({
+            hostname: info.hostname,
+            ip: entry.address,
+            family: entry.family,
+            port: info.port,
+            protocol: info.protocol,
+          });
+          if (allowed) {
+            if (!normalizedOptions.all) {
+              callback(null, entry.address, entry.family);
+              return;
+            }
+            allowedEntries.push(entry);
+          }
+        }
+
+        if (normalizedOptions.all && allowedEntries.length > 0) {
+          callback(null, allowedEntries.map((entry) => ({
+            address: entry.address,
+            family: entry.family,
+          })));
+          return;
+        }
+
+        callback(
+          new HttpRequestBlockedError(`blocked by policy: ${info.hostname}`),
+          normalizeLookupFailure(normalizedOptions)
+        );
+      })().catch((error) => {
+        callback(error as Error, normalizeLookupFailure(normalizedOptions));
+      });
+    });
+  };
+}
+
+function normalizeLookupEntries(address: LookupResult | undefined, family?: number): LookupEntry[] {
+  if (!address) return [];
+
+  if (Array.isArray(address)) {
+    return address
+      .map((entry) => {
+        const family = entry.family === 6 ? 6 : 4;
+        return {
+          address: entry.address,
+          family: family as 4 | 6,
+        };
+      })
+      .filter((entry) => Boolean(entry.address));
+  }
+
+  const resolvedFamily = family === 6 || family === 4 ? family : net.isIP(address);
+  if (resolvedFamily !== 4 && resolvedFamily !== 6) return [];
+  return [{ address, family: resolvedFamily }];
+}
+
+function normalizeLookupOptions(
+  options: dns.LookupOneOptions | dns.LookupAllOptions | number
+): dns.LookupOneOptions | dns.LookupAllOptions {
+  if (typeof options === "number") {
+    return { family: options };
+  }
+  return options;
+}
+
+function normalizeLookupFailure(options: dns.LookupOneOptions | dns.LookupAllOptions): LookupResult {
+  return options.all ? [] : "";
+}
+
+function getUrlProtocol(url: URL): "http" | "https" | null {
+  if (url.protocol === "https:") return "https";
+  if (url.protocol === "http:") return "http";
+  return null;
+}
+
+function getUrlPort(url: URL, protocol: "http" | "https"): number {
+  if (url.port) return Number(url.port);
+  return protocol === "https" ? 443 : 80;
+}
+
+function getRedirectUrl(response: FetchResponse, currentUrl: URL): URL | null {
+  if (![301, 302, 303, 307, 308].includes(response.status)) return null;
+  const location = response.headers.get("location");
+  if (!location) return null;
+  try {
+    return new URL(location, currentUrl);
+  } catch {
+    return null;
+  }
+}
+
+function applyRedirectRequest(
+  request: HttpHookRequest,
+  status: number,
+  redirectUrl: URL
+): HttpHookRequest {
+  let method = request.method;
+  let body = request.body;
+
+  if (status === 303 && method !== "GET" && method !== "HEAD") {
+    method = "GET";
+    body = null;
+  } else if ((status === 301 || status === 302) && method === "POST") {
+    method = "GET";
+    body = null;
+  }
+
+  const headers = { ...request.headers };
+  if (headers.host) {
+    headers.host = redirectUrl.host;
+  }
+
+  if (!body || method === "GET" || method === "HEAD") {
+    delete headers["content-length"];
+    delete headers["content-type"];
+    delete headers["transfer-encoding"];
+  }
+
+  return {
+    method,
+    url: redirectUrl.toString(),
+    headers,
+    body,
+  };
 }

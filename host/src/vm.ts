@@ -47,6 +47,8 @@ function formatLog(message: string) {
 
 type ExecInput = string | string[];
 
+type EnvInput = string[] | Record<string, string>;
+
 type ExecStdin = boolean | string | Buffer | Readable | AsyncIterable<Buffer>;
 
 export type VmVfsOptions = {
@@ -64,13 +66,14 @@ export type VMOptions = {
   fetch?: HttpFetch;
   httpHooks?: HttpHooks;
   vfs?: VmVfsOptions | null;
+  env?: EnvInput;
 };
 
 export type ShellOptions = {
   /** Command to run (default: bash) */
   command?: string | string[];
   /** Environment variables */
-  env?: string[];
+  env?: EnvInput;
   /** Working directory */
   cwd?: string;
   /** Abort signal */
@@ -89,6 +92,7 @@ export class VM {
   private readonly token?: string;
   private readonly autoStart: boolean;
   private readonly server: SandboxWsServer | null;
+  private readonly defaultEnv: EnvInput | undefined;
   private url: string | null;
   private ws: WebSocket | null = null;
   private connectPromise: Promise<void> | null = null;
@@ -122,6 +126,7 @@ export class VM {
     this.autoStart = options.autoStart ?? true;
     this.policy = options.policy ?? null;
     this.vfs = resolveVmVfs(options.vfs);
+    this.defaultEnv = options.env;
     const fuseConfig = resolveFuseConfig(options.vfs);
     this.fuseMount = fuseConfig.fuseMount;
     this.fuseBinds = fuseConfig.fuseBinds;
@@ -282,17 +287,7 @@ export class VM {
     const command = options.command ?? ["bash", "-i"];
     const shouldAttach = options.attach ?? process.stdin.isTTY;
 
-    // Build TERM environment variable
-    const env = [...(options.env ?? [])];
-    const hasTermEnv = env.some((e) => e.startsWith("TERM="));
-    if (!hasTermEnv) {
-      const term = process.env.TERM;
-      if (!term || term === "xterm-ghostty") {
-        env.push("TERM=xterm-256color");
-      } else {
-        env.push(`TERM=${term}`);
-      }
-    }
+    const env = buildShellEnv(this.defaultEnv, options.env);
 
     const proc = this.exec(command, {
       env,
@@ -363,12 +358,14 @@ export class VM {
       await this.start();
       await this.ensureVfsReady();
 
+      const mergedEnv = mergeEnvInputs(this.defaultEnv, options.env);
+
       const message = {
         type: "exec" as const,
         id,
         cmd,
         argv: argv.length ? argv : undefined,
-        env: options.env && options.env.length ? options.env : undefined,
+        env: mergedEnv && mergedEnv.length ? mergedEnv : undefined,
         cwd: options.cwd,
         stdin: session.stdinEnabled ? true : undefined,
         pty: options.pty ? true : undefined,
@@ -861,4 +858,61 @@ async function* toAsyncIterable(value: ExecStdin): AsyncIterable<Buffer> {
   }
 
   throw new Error("unsupported stdin type");
+}
+
+function buildShellEnv(baseEnv?: EnvInput, extraEnv?: EnvInput): string[] | undefined {
+  const envMap = mergeEnvMap(baseEnv, extraEnv);
+  if (envMap.size === 0) {
+    const term = resolveTermValue();
+    return term ? [`TERM=${term}`] : undefined;
+  }
+
+  if (!envMap.has("TERM")) {
+    const term = resolveTermValue();
+    if (term) envMap.set("TERM", term);
+  }
+
+  return mapToEnvArray(envMap);
+}
+
+function resolveTermValue(): string | null {
+  const term = process.env.TERM;
+  if (!term || term === "xterm-ghostty") {
+    return "xterm-256color";
+  }
+  return term;
+}
+
+function mergeEnvInputs(baseEnv?: EnvInput, extraEnv?: EnvInput): string[] | undefined {
+  const envMap = mergeEnvMap(baseEnv, extraEnv);
+  return envMap.size > 0 ? mapToEnvArray(envMap) : undefined;
+}
+
+function mergeEnvMap(baseEnv?: EnvInput, extraEnv?: EnvInput): Map<string, string> {
+  const envMap = new Map<string, string>();
+  for (const [key, value] of envInputToEntries(baseEnv)) {
+    envMap.set(key, value);
+  }
+  for (const [key, value] of envInputToEntries(extraEnv)) {
+    envMap.set(key, value);
+  }
+  return envMap;
+}
+
+function envInputToEntries(env?: EnvInput): Array<[string, string]> {
+  if (!env) return [];
+  if (Array.isArray(env)) {
+    return env.map(parseEnvEntry);
+  }
+  return Object.entries(env);
+}
+
+function parseEnvEntry(entry: string): [string, string] {
+  const idx = entry.indexOf("=");
+  if (idx === -1) return [entry, ""];
+  return [entry.slice(0, idx), entry.slice(idx + 1)];
+}
+
+function mapToEnvArray(envMap: Map<string, string>): string[] {
+  return Array.from(envMap.entries(), ([key, value]) => `${key}=${value}`);
 }
