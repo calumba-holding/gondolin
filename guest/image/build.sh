@@ -6,8 +6,8 @@ REPO_ROOT=$(cd "${SCRIPT_DIR}/../.." && pwd)
 GUEST_DIR="${REPO_ROOT}/guest"
 IMAGE_DIR="${GUEST_DIR}/image"
 
-ALPINE_VERSION=${ALPINE_VERSION:-3.20.3}
-ALPINE_BRANCH=${ALPINE_BRANCH:-v3.20}
+ALPINE_VERSION=${ALPINE_VERSION:-3.23.0}
+ALPINE_BRANCH=${ALPINE_BRANCH:-v3.23}
 ARCH=${ARCH:-$(uname -m)}
 if [[ "${ARCH}" == "x86_64" && "$(uname -s)" == "Darwin" ]]; then
     if sysctl -n hw.optional.arm64 >/dev/null 2>&1; then
@@ -30,7 +30,7 @@ SANDBOXFS_BIN=${SANDBOXFS_BIN:-"${GUEST_DIR}/zig-out/bin/sandboxfs"}
 
 ALPINE_TARBALL="alpine-minirootfs-${ALPINE_VERSION}-${ARCH}.tar.gz"
 ALPINE_URL=${ALPINE_URL:-"https://dl-cdn.alpinelinux.org/alpine/${ALPINE_BRANCH}/releases/${ARCH}/${ALPINE_TARBALL}"}
-EXTRA_PACKAGES=${EXTRA_PACKAGES:-python3 linux-virt rng-tools bash ca-certificates}
+EXTRA_PACKAGES=${EXTRA_PACKAGES:-linux-virt rng-tools bash ca-certificates curl nodejs npm uv}
 
 require_cmd() {
     if ! command -v "$1" >/dev/null 2>&1; then
