@@ -8,7 +8,7 @@ import crypto from "crypto";
 import dns from "dns";
 import { Duplex } from "stream";
 import type { ReadableStream as WebReadableStream } from "stream/web";
-import { execFileSync } from "child_process";
+import forge from "node-forge";
 import { lookup } from "dns/promises";
 import { Agent, fetch as undiciFetch } from "undici";
 
@@ -1020,27 +1020,33 @@ export class QemuNetworkBackend extends EventEmitter {
     const caCertPath = path.join(mitmDir, "ca.crt");
 
     if (!fs.existsSync(caKeyPath) || !fs.existsSync(caCertPath)) {
-      // XXX: openssl invocations here are synchronous and block the event loop.
-      execFileSync(
-        "openssl",
-        [
-          "req",
-          "-x509",
-          "-newkey",
-          "rsa:2048",
-          "-sha256",
-          "-days",
-          "3650",
-          "-nodes",
-          "-subj",
-          "/CN=gondolin-mitm-ca",
-          "-keyout",
-          caKeyPath,
-          "-out",
-          caCertPath,
-        ],
-        { stdio: "ignore" }
-      );
+      const keys = forge.pki.rsa.generateKeyPair(2048);
+      const cert = forge.pki.createCertificate();
+
+      cert.publicKey = keys.publicKey;
+      cert.serialNumber = generateSerialNumber();
+      cert.validity.notBefore = new Date();
+      cert.validity.notAfter = new Date();
+      cert.validity.notAfter.setDate(cert.validity.notBefore.getDate() + 3650);
+
+      const attrs = [{ name: "commonName", value: "gondolin-mitm-ca" }];
+      cert.setSubject(attrs);
+      cert.setIssuer(attrs);
+
+      cert.setExtensions([
+        { name: "basicConstraints", cA: true, critical: true },
+        {
+          name: "keyUsage",
+          keyCertSign: true,
+          cRLSign: true,
+          critical: true,
+        },
+      ]);
+
+      cert.sign(keys.privateKey, forge.md.sha256.create());
+
+      fs.writeFileSync(caKeyPath, forge.pki.privateKeyToPem(keys.privateKey));
+      fs.writeFileSync(caCertPath, forge.pki.certificateToPem(cert));
 
       if (this.options.debug) {
         this.emit("log", `[net] generated mitm CA at ${caCertPath}`);
@@ -1093,70 +1099,44 @@ export class QemuNetworkBackend extends EventEmitter {
       return { keyPath, certPath };
     }
 
-    const csrPath = path.join(hostsDir, `${baseName}.csr`);
-    const configPath = path.join(hostsDir, `${baseName}.cnf`);
+    const caKeyPem = fs.readFileSync(this.caKeyPath, "utf8");
+    const caCertPem = fs.readFileSync(this.caCertPath, "utf8");
+    const caKey = forge.pki.privateKeyFromPem(caKeyPem);
+    const caCert = forge.pki.certificateFromPem(caCertPem);
+
+    const keys = forge.pki.rsa.generateKeyPair(2048);
+    const cert = forge.pki.createCertificate();
+
+    cert.publicKey = keys.publicKey;
+    cert.serialNumber = generateSerialNumber();
+    cert.validity.notBefore = new Date();
+    cert.validity.notAfter = new Date();
+    cert.validity.notAfter.setDate(cert.validity.notBefore.getDate() + 825);
 
     const safeName = servername.replace(/[\r\n]/g, "");
-    const san = net.isIP(servername) ? `IP:${servername}` : `DNS:${servername}`;
-    const config = [
-      "[req]",
-      "distinguished_name=req_dist",
-      "prompt=no",
-      "req_extensions=v3_req",
-      "[req_dist]",
-      `CN=${safeName}`,
-      "[v3_req]",
-      `subjectAltName=${san}`,
-      "keyUsage=digitalSignature,keyEncipherment",
-      "extendedKeyUsage=serverAuth",
-      "",
-    ].join("\n");
+    const attrs = [{ name: "commonName", value: safeName }];
+    cert.setSubject(attrs);
+    cert.setIssuer(caCert.subject.attributes);
 
-    fs.writeFileSync(configPath, config);
+    const altNames = net.isIP(servername)
+      ? [{ type: 7, ip: servername }]
+      : [{ type: 2, value: servername }];
 
-    // XXX: openssl invocations here are synchronous and block the event loop.
-    execFileSync("openssl", ["genrsa", "-out", keyPath, "2048"], { stdio: "ignore" });
-    execFileSync(
-      "openssl",
-      [
-        "req",
-        "-new",
-        "-key",
-        keyPath,
-        "-out",
-        csrPath,
-        "-config",
-        configPath,
-      ],
-      { stdio: "ignore" }
-    );
-    execFileSync(
-      "openssl",
-      [
-        "x509",
-        "-req",
-        "-in",
-        csrPath,
-        "-CA",
-        this.caCertPath,
-        "-CAkey",
-        this.caKeyPath,
-        "-CAcreateserial",
-        "-out",
-        certPath,
-        "-days",
-        "825",
-        "-sha256",
-        "-extfile",
-        configPath,
-        "-extensions",
-        "v3_req",
-      ],
-      { stdio: "ignore" }
-    );
+    cert.setExtensions([
+      { name: "basicConstraints", cA: false },
+      {
+        name: "keyUsage",
+        digitalSignature: true,
+        keyEncipherment: true,
+      },
+      { name: "extKeyUsage", serverAuth: true },
+      { name: "subjectAltName", altNames },
+    ]);
 
-    fs.rmSync(csrPath, { force: true });
-    fs.rmSync(configPath, { force: true });
+    cert.sign(caKey, forge.md.sha256.create());
+
+    fs.writeFileSync(keyPath, forge.pki.privateKeyToPem(keys.privateKey));
+    fs.writeFileSync(certPath, forge.pki.certificateToPem(cert));
 
     return { keyPath, certPath };
   }
@@ -1284,6 +1264,10 @@ function normalizeLookupOptions(
 
 function normalizeLookupFailure(options: dns.LookupOneOptions | dns.LookupAllOptions): LookupResult {
   return options.all ? [] : "";
+}
+
+function generateSerialNumber(): string {
+  return crypto.randomBytes(16).toString("hex");
 }
 
 function getUrlProtocol(url: URL): "http" | "https" | null {
