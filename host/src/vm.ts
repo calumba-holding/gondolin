@@ -745,7 +745,7 @@ export class VM {
   private async waitForVfsReadyInternal() {
     await this.waitForMount(this.fuseMount, "fuse.sandboxfs");
     for (const mountPoint of this.fuseBinds) {
-      await this.waitForMount(mountPoint);
+      await this.waitForBindMount(mountPoint);
     }
   }
 
@@ -754,12 +754,47 @@ export class VM {
       ? `grep -q " $1 ${fsType} " /proc/mounts`
       : `grep -q " $1 " /proc/mounts`;
     const script = `for i in $(seq 1 ${VFS_READY_ATTEMPTS}); do ${mountCheck} && exit 0; sleep ${VFS_READY_SLEEP_SECONDS}; done; exit 1`;
-    
+
     // Use internal exec that bypasses VFS check
     const result = await this.execInternalNoVfsWait(["sh", "-c", script, "sh", mountPoint]);
     if (result.exitCode !== 0) {
       throw new Error(
         `vfs mount ${mountPoint} not ready (exit ${result.exitCode}): ${result.stderr.trim()}`
+      );
+    }
+  }
+
+  private async waitForBindMount(mountPoint: string) {
+    if (mountPoint === this.fuseMount) return;
+    if (this.fuseMount === "/") {
+      await this.waitForPath(mountPoint);
+      return;
+    }
+
+    const source = `${this.fuseMount}${mountPoint}`;
+    const script = `for i in $(seq 1 ${VFS_READY_ATTEMPTS}); do if grep -q " $1 " /proc/mounts; then exit 0; fi; mkdir -p "$1"; mount --bind "$2" "$1" > /dev/null 2>&1 || true; sleep ${VFS_READY_SLEEP_SECONDS}; done; exit 1`;
+
+    const result = await this.execInternalNoVfsWait([
+      "sh",
+      "-c",
+      script,
+      "sh",
+      mountPoint,
+      source,
+    ]);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `vfs mount ${mountPoint} not ready (exit ${result.exitCode}): ${result.stderr.trim()}`
+      );
+    }
+  }
+
+  private async waitForPath(entryPath: string) {
+    const script = `for i in $(seq 1 ${VFS_READY_ATTEMPTS}); do [ -e "$1" ] && exit 0; sleep ${VFS_READY_SLEEP_SECONDS}; done; exit 1`;
+    const result = await this.execInternalNoVfsWait(["sh", "-c", script, "sh", entryPath]);
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `vfs path ${entryPath} not ready (exit ${result.exitCode}): ${result.stderr.trim()}`
       );
     }
   }

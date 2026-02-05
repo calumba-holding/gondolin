@@ -55,6 +55,19 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   async stat(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            return await mount.provider.stat(mount.relativePath, options);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return createVirtualDirStats();
+            }
+            throw err;
+          }
+        }
+      }
       return mount.provider.stat(mount.relativePath, options);
     }
     this.ensureVirtualDir(entryPath, "stat");
@@ -64,6 +77,19 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   statSync(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            return mount.provider.statSync(mount.relativePath, options);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return createVirtualDirStats();
+            }
+            throw err;
+          }
+        }
+      }
       return mount.provider.statSync(mount.relativePath, options);
     }
     this.ensureVirtualDir(entryPath, "stat");
@@ -73,6 +99,19 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   async lstat(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            return await mount.provider.lstat(mount.relativePath, options);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return createVirtualDirStats();
+            }
+            throw err;
+          }
+        }
+      }
       return mount.provider.lstat(mount.relativePath, options);
     }
     this.ensureVirtualDir(entryPath, "lstat");
@@ -82,6 +121,19 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   lstatSync(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            return mount.provider.lstatSync(mount.relativePath, options);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return createVirtualDirStats();
+            }
+            throw err;
+          }
+        }
+      }
       return mount.provider.lstatSync(mount.relativePath, options);
     }
     this.ensureVirtualDir(entryPath, "lstat");
@@ -100,6 +152,18 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
       return formatVirtualEntries(children, withTypes);
     }
 
+    if (mount.mountPath === "/" && children.length > 0) {
+      try {
+        const entries = (await mount.provider.readdir(mount.relativePath, options)) as Array<string | fs.Dirent>;
+        return mergeEntries(entries, children, withTypes);
+      } catch (err) {
+        if (isNoEntryError(err)) {
+          return formatVirtualEntries(children, withTypes);
+        }
+        throw err;
+      }
+    }
+
     const entries = (await mount.provider.readdir(mount.relativePath, options)) as Array<string | fs.Dirent>;
     return mergeEntries(entries, children, withTypes);
   }
@@ -114,6 +178,18 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
         throw createErrnoError(ERRNO.ENOENT, "readdir", entryPath);
       }
       return formatVirtualEntries(children, withTypes);
+    }
+
+    if (mount.mountPath === "/" && children.length > 0) {
+      try {
+        const entries = mount.provider.readdirSync(mount.relativePath, options) as Array<string | fs.Dirent>;
+        return mergeEntries(entries, children, withTypes);
+      } catch (err) {
+        if (isNoEntryError(err)) {
+          return formatVirtualEntries(children, withTypes);
+        }
+        throw err;
+      }
     }
 
     const entries = mount.provider.readdirSync(mount.relativePath, options) as Array<string | fs.Dirent>;
@@ -195,6 +271,22 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   async realpath(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            if (mount.provider.realpath) {
+              return await mount.provider.realpath(mount.relativePath, options);
+            }
+            return await super.realpath(mount.relativePath, options);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return normalizePath(entryPath);
+            }
+            throw err;
+          }
+        }
+      }
       if (mount.provider.realpath) {
         return mount.provider.realpath(mount.relativePath, options);
       }
@@ -207,6 +299,22 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   realpathSync(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            if (mount.provider.realpathSync) {
+              return mount.provider.realpathSync(mount.relativePath, options);
+            }
+            return super.realpathSync(mount.relativePath, options);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return normalizePath(entryPath);
+            }
+            throw err;
+          }
+        }
+      }
       if (mount.provider.realpathSync) {
         return mount.provider.realpathSync(mount.relativePath, options);
       }
@@ -219,6 +327,22 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   async access(entryPath: string, mode?: number) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            if (mount.provider.access) {
+              return await mount.provider.access(mount.relativePath, mode);
+            }
+            return await super.access(mount.relativePath, mode);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return;
+            }
+            throw err;
+          }
+        }
+      }
       if (mount.provider.access) {
         return mount.provider.access(mount.relativePath, mode);
       }
@@ -230,6 +354,22 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   accessSync(entryPath: string, mode?: number) {
     const mount = this.resolveMount(entryPath);
     if (mount) {
+      if (mount.mountPath === "/") {
+        const children = this.virtualChildren(entryPath);
+        if (children.length > 0) {
+          try {
+            if (mount.provider.accessSync) {
+              return mount.provider.accessSync(mount.relativePath, mode);
+            }
+            return super.accessSync(mount.relativePath, mode);
+          } catch (err) {
+            if (isNoEntryError(err)) {
+              return;
+            }
+            throw err;
+          }
+        }
+      }
       if (mount.provider.accessSync) {
         return mount.provider.accessSync(mount.relativePath, mode);
       }
@@ -413,6 +553,16 @@ function formatVirtualEntries(children: string[], withTypes: boolean) {
 
 function getEntryName(entry: string | fs.Dirent) {
   return typeof entry === "string" ? entry : entry.name;
+}
+
+function isNoEntryError(err: unknown) {
+  if (!err || typeof err !== "object") return false;
+  const error = err as NodeJS.ErrnoException;
+  return (
+    error.code === "ENOENT" ||
+    error.code === "ERRNO_2" ||
+    error.errno === ERRNO.ENOENT
+  );
 }
 
 function isUnderMountPoint(normalizedPath: string, mountPoint: string) {
