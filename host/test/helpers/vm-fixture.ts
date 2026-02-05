@@ -73,6 +73,17 @@ export async function withVm<T>(
   }
 }
 
+export async function closeVm(key: string): Promise<void> {
+  const entry = pool.get(key);
+  if (!entry) {
+    pending.delete(key);
+    return;
+  }
+  pool.delete(key);
+  pending.delete(key);
+  await entry.vm.stop();
+}
+
 export async function closeAllVms(): Promise<void> {
   const entries = Array.from(pool.values());
   pool.clear();

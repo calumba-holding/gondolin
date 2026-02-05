@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { Readable } from "node:stream";
+import test from "node:test";
+
+import { closeVm, withVm } from "./helpers/vm-fixture";
+
+const timeoutMs = Number(process.env.WS_TIMEOUT ?? 15000);
+const execVmKey = "exec-default";
+const execVmOptions = {
+  server: { console: "none" },
+  env: { BASE_ENV: "base" },
+};
+
+test.after(() => closeVm(execVmKey));
+
+test("exec merges env inputs", { timeout: timeoutMs }, async () => {
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const result = await vm.exec(["sh", "-c", "echo $BASE_ENV $EXTRA_ENV"], {
+      env: { EXTRA_ENV: "extra" },
+    });
+    assert.equal(result.stdout.trim(), "base extra");
+  });
+});
+
+test("exec supports async iterable stdin", { timeout: timeoutMs }, async () => {
+  async function* input() {
+    yield Buffer.from("hello");
+    yield Buffer.from(" world");
+  }
+
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const result = await vm.exec(["cat"], { stdin: input() });
+    assert.equal(result.stdout, "hello world");
+  });
+});
+
+test("exec supports readable stdin", { timeout: timeoutMs }, async () => {
+  const stream = Readable.from(["foo", "bar"]);
+
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const result = await vm.exec(["cat"], { stdin: stream });
+    assert.equal(result.stdout, "foobar");
+  });
+});
+
+test("exec output iterator yields stdout and stderr", { timeout: timeoutMs }, async () => {
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const proc = vm.exec(["sh", "-c", "echo out; echo err 1>&2"]);
+    const chunks: string[] = [];
+
+    for await (const chunk of proc.output()) {
+      chunks.push(`${chunk.stream}:${chunk.text.trim()}`);
+    }
+
+    const result = await proc;
+    assert.equal(result.exitCode, 0);
+    assert.ok(chunks.some((item) => item === "stdout:out"));
+    assert.ok(chunks.some((item) => item === "stderr:err"));
+  });
+});
+
+test("exec lines iterator yields stdout lines", { timeout: timeoutMs }, async () => {
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const proc = vm.exec(["sh", "-c", "printf 'one\ntwo\nthree'"]);
+    const lines: string[] = [];
+
+    for await (const line of proc.lines()) {
+      lines.push(line);
+    }
+
+    await proc;
+    assert.deepEqual(lines, ["one", "two", "three"]);
+  });
+});
+
+test("shell runs commands without attaching", { timeout: timeoutMs }, async () => {
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const result = await vm.shell({ command: ["sh", "-c", "echo shell-ok"], attach: false });
+    assert.equal(result.stdout.trim(), "shell-ok");
+  });
+});
+
+test("exec aborts with signal", { timeout: timeoutMs }, async () => {
+  await withVm(execVmKey, execVmOptions, async (vm) => {
+    await vm.waitForReady();
+    const controller = new AbortController();
+    const proc = vm.exec(["sh", "-c", "sleep 5"], { signal: controller.signal });
+
+    setTimeout(() => controller.abort(), 100);
+
+    await assert.rejects(proc, /exec aborted/);
+  });
+});
