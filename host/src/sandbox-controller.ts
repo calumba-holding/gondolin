@@ -253,7 +253,15 @@ function selectMachineType(targetArch: string) {
 }
 
 function selectAccel() {
-  if (process.platform === "linux") return "kvm";
+  if (process.platform === "linux") {
+    // Check if KVM is actually available (e.g., not in CI without nested virt)
+    try {
+      fs.accessSync("/dev/kvm", fs.constants.R_OK | fs.constants.W_OK);
+      return "kvm";
+    } catch {
+      return "tcg";
+    }
+  }
   if (process.platform === "darwin") return "hvf";
   return "tcg";
 }
