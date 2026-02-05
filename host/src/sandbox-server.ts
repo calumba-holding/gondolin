@@ -25,7 +25,7 @@ import {
   StdinCommandMessage,
   encodeOutputFrame,
   ServerMessage,
-} from "./ws-protocol";
+} from "./control-protocol";
 import { SandboxController, SandboxConfig, SandboxState } from "./sandbox-controller";
 import { QemuNetworkBackend, DEFAULT_MAX_HTTP_BODY_BYTES } from "./qemu-net";
 import type { HttpFetch, HttpHooks } from "./qemu-net";

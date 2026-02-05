@@ -6,7 +6,7 @@ import {
   StatusMessage,
   decodeOutputFrame,
   type ClientMessage,
-} from "./ws-protocol";
+} from "./control-protocol";
 import {
   SandboxServer,
   SandboxServerOptions,
