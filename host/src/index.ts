@@ -61,5 +61,32 @@ export {
   getAssetVersion,
   getAssetDirectory,
   hasGuestAssets,
+  loadGuestAssets,
   type GuestAssets,
 } from "./assets";
+
+// Build configuration and builder
+export {
+  type Architecture,
+  type Distro,
+  type BuildConfig,
+  type AlpineConfig,
+  type NixOSConfig,
+  type ContainerConfig,
+  type RootfsConfig,
+  type InitConfig,
+  type AssetManifest,
+  getDefaultBuildConfig,
+  getDefaultArch,
+  validateBuildConfig,
+  parseBuildConfig,
+  serializeBuildConfig,
+} from "./build-config";
+
+export {
+  buildAssets,
+  loadAssetManifest,
+  verifyAssets,
+  type BuildOptions,
+  type BuildResult,
+} from "./builder";

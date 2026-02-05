@@ -94,6 +94,43 @@ export interface GuestAssets {
 }
 
 /**
+ * Load guest assets from a custom directory.
+ *
+ * This is useful when you've built custom assets using `gondolin build`.
+ * The directory should contain vmlinuz-virt, initramfs.cpio.lz4, and rootfs.ext4.
+ *
+ * @param assetDir Path to the directory containing the assets
+ * @returns Paths to the guest assets
+ * @throws If any required assets are missing
+ */
+export function loadGuestAssets(assetDir: string): GuestAssets {
+  const resolvedDir = path.resolve(assetDir);
+
+  if (!assetsExist(resolvedDir)) {
+    const missing: string[] = [];
+    if (!fs.existsSync(path.join(resolvedDir, "vmlinuz-virt"))) {
+      missing.push("vmlinuz-virt");
+    }
+    if (!fs.existsSync(path.join(resolvedDir, "initramfs.cpio.lz4"))) {
+      missing.push("initramfs.cpio.lz4");
+    }
+    if (!fs.existsSync(path.join(resolvedDir, "rootfs.ext4"))) {
+      missing.push("rootfs.ext4");
+    }
+    throw new Error(
+      `Missing guest assets in ${resolvedDir}: ${missing.join(", ")}\n` +
+        `Run 'gondolin build' to create custom assets, or ensure the directory contains all required files.`
+    );
+  }
+
+  return {
+    kernelPath: path.join(resolvedDir, "vmlinuz-virt"),
+    initrdPath: path.join(resolvedDir, "initramfs.cpio.lz4"),
+    rootfsPath: path.join(resolvedDir, "rootfs.ext4"),
+  };
+}
+
+/**
  * Check if all guest assets are present in a directory.
  */
 function assetsExist(dir: string): boolean {

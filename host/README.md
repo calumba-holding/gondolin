@@ -215,6 +215,118 @@ const assets = await ensureGuestAssets();
 console.log("Kernel:", assets.kernelPath);
 ```
 
+## Building Custom Guest Images
+
+You can build custom guest images with different packages or configurations using
+the `gondolin build` command.
+
+### Quick Start
+
+Build a custom image with the default configuration:
+
+```bash
+gondolin build --output ./my-assets
+```
+
+### Customization Workflow
+
+1. Generate a default configuration:
+```bash
+gondolin build --init-config > build-config.json
+```
+
+2. Edit the configuration to customize packages, settings, etc.:
+```json
+{
+  "arch": "aarch64",
+  "distro": "alpine",
+  "alpine": {
+    "version": "3.23.0",
+    "kernelPackage": "linux-virt",
+    "kernelImage": "vmlinuz-virt",
+    "rootfsPackages": [
+      "linux-virt", "rng-tools", "bash", "ca-certificates", "curl",
+      "nodejs", "npm", "python3", "git", "your-custom-package"
+    ]
+  },
+  "rootfs": {
+    "label": "gondolin-root"
+  }
+}
+```
+
+3. Build with your configuration:
+```bash
+gondolin build --config build-config.json --output ./my-assets
+```
+
+4. Use the custom assets:
+```bash
+GONDOLIN_GUEST_DIR=./my-assets gondolin bash
+```
+
+### Build Options
+
+- `--init-config` - Generate a default build configuration to stdout
+- `--config FILE` - Use a custom configuration file
+- `--output DIR` - Output directory for built assets (required)
+- `--arch ARCH` - Target architecture (`aarch64` or `x86_64`)
+- `--verify DIR` - Verify assets in a directory against their manifest
+- `--quiet` - Reduce output verbosity
+
+> **Note:** If you set a custom Alpine `kernelPackage` (e.g., `linux-lts`), also
+> set `kernelImage` to the corresponding filename inside the package (e.g.,
+> `vmlinuz-lts`).
+
+### Build Requirements
+
+Building custom images requires:
+- **Zig** compiler (for cross-compiling sandboxd/sandboxfs)
+- **lz4** for initramfs compression
+- **curl** for downloading Alpine packages
+- **python3** for package dependency resolution
+- **e2fsprogs** (mke2fs) for creating ext4 rootfs images
+
+On macOS:
+```bash
+brew install zig lz4 e2fsprogs
+```
+
+On Linux:
+```bash
+sudo apt install zig lz4 curl python3 e2fsprogs
+```
+
+### Architecture Cross-Compilation
+
+The build system supports cross-compiling for different architectures:
+
+```bash
+# Build for x86_64 on an ARM64 host
+gondolin build --arch x86_64 --output ./x64-assets
+
+# Build for ARM64 on an x86_64 host
+gondolin build --arch aarch64 --output ./arm64-assets
+```
+
+### Using Custom Assets Programmatically
+
+```ts
+import { VM, loadGuestAssets } from "@earendil-works/gondolin";
+
+// Load custom assets
+const assets = loadGuestAssets("./my-assets");
+
+// Create VM with custom assets
+const vm = await VM.create({
+  server: {
+    kernelPath: assets.kernelPath,
+    initrdPath: assets.initrdPath,
+    rootfsPath: assets.rootfsPath,
+  },
+});
+```
+
 ## Development
 
 When working in the gondolin repository, assets are loaded from

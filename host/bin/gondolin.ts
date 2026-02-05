@@ -14,6 +14,13 @@ import {
   encodeFrame,
   IncomingMessage,
 } from "../src/virtio-protocol";
+import {
+  getDefaultBuildConfig,
+  serializeBuildConfig,
+  parseBuildConfig,
+  type BuildConfig,
+} from "../src/build-config";
+import { buildAssets, verifyAssets, loadAssetManifest } from "../src/builder";
 
 type Command = {
   cmd: string;
@@ -34,6 +41,7 @@ function usage() {
   console.log("Commands:");
   console.log("  exec         Run a command via the virtio socket or in-process VM");
   console.log("  bash         Start an interactive bash session in the VM");
+  console.log("  build        Build custom guest assets (kernel, initramfs, rootfs)");
   console.log("  help         Show this help");
   console.log("\nRun gondolin <command> --help for command-specific flags.");
 }
@@ -629,6 +637,210 @@ async function runBash(argv: string[]) {
   }
 }
 
+// ============================================================================
+// Build command
+// ============================================================================
+
+function buildUsage() {
+  console.log("Usage: gondolin build [options]");
+  console.log();
+  console.log("Build custom guest assets (kernel, initramfs, rootfs).");
+  console.log();
+  console.log("Options:");
+  console.log("  --init-config           Generate a default build configuration");
+  console.log("  --config FILE           Use the specified build configuration file");
+  console.log("  --output DIR            Output directory for built assets (required for build)");
+  console.log("  --arch ARCH             Target architecture (aarch64, x86_64)");
+  console.log("  --verify DIR            Verify assets in directory against manifest");
+  console.log("  --quiet                 Reduce output verbosity");
+  console.log();
+  console.log("Workflows:");
+  console.log();
+  console.log("  1. Generate default config:");
+  console.log("     gondolin build --init-config > build-config.json");
+  console.log();
+  console.log("  2. Edit the config to customize packages, settings, etc.");
+  console.log();
+  console.log("  3. Build assets:");
+  console.log("     gondolin build --config build-config.json --output ./my-assets");
+  console.log();
+  console.log("  4. Use custom assets with VM:");
+  console.log("     GONDOLIN_GUEST_DIR=./my-assets gondolin bash");
+  console.log();
+  console.log("Quick build (uses defaults for current architecture):");
+  console.log("  gondolin build --output ./my-assets");
+  console.log();
+  console.log("Verify built assets:");
+  console.log("  gondolin build --verify ./my-assets");
+}
+
+type BuildArgs = {
+  initConfig: boolean;
+  configFile?: string;
+  outputDir?: string;
+  arch?: "aarch64" | "x86_64";
+  verify?: string;
+  quiet: boolean;
+};
+
+function parseBuildArgs(argv: string[]): BuildArgs {
+  const args: BuildArgs = {
+    initConfig: false,
+    quiet: false,
+  };
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    switch (arg) {
+      case "--init-config":
+        args.initConfig = true;
+        break;
+      case "--config": {
+        const value = argv[++i];
+        if (!value) {
+          console.error("--config requires a file path");
+          process.exit(1);
+        }
+        args.configFile = value;
+        break;
+      }
+      case "--output": {
+        const value = argv[++i];
+        if (!value) {
+          console.error("--output requires a directory path");
+          process.exit(1);
+        }
+        args.outputDir = value;
+        break;
+      }
+      case "--arch": {
+        const value = argv[++i];
+        if (value !== "aarch64" && value !== "x86_64") {
+          console.error("--arch must be aarch64 or x86_64");
+          process.exit(1);
+        }
+        args.arch = value;
+        break;
+      }
+      case "--verify": {
+        const value = argv[++i];
+        if (!value) {
+          console.error("--verify requires a directory path");
+          process.exit(1);
+        }
+        args.verify = value;
+        break;
+      }
+      case "--quiet":
+      case "-q":
+        args.quiet = true;
+        break;
+      case "--help":
+      case "-h":
+        buildUsage();
+        process.exit(0);
+      default:
+        console.error(`Unknown argument: ${arg}`);
+        buildUsage();
+        process.exit(1);
+    }
+  }
+
+  return args;
+}
+
+async function runBuild(argv: string[]) {
+  const args = parseBuildArgs(argv);
+
+  // Handle --init-config
+  if (args.initConfig) {
+    const config = getDefaultBuildConfig();
+    if (args.arch) {
+      config.arch = args.arch;
+    }
+    console.log(serializeBuildConfig(config));
+    return;
+  }
+
+  // Handle --verify
+  if (args.verify) {
+    const assetDir = path.resolve(args.verify);
+    const manifest = loadAssetManifest(assetDir);
+
+    if (!manifest) {
+      console.error(`No manifest found in ${assetDir}`);
+      process.exit(1);
+    }
+
+    console.log(`Verifying assets in ${assetDir}...`);
+    console.log(`Build time: ${manifest.buildTime}`);
+    console.log(`Architecture: ${manifest.config.arch}`);
+    console.log(`Distribution: ${manifest.config.distro}`);
+
+    if (verifyAssets(assetDir)) {
+      console.log("✓ All assets verified successfully");
+      process.exit(0);
+    } else {
+      console.error("✗ Asset verification failed");
+      process.exit(1);
+    }
+  }
+
+  // Build mode - require output directory
+  if (!args.outputDir) {
+    console.error("--output is required for build");
+    buildUsage();
+    process.exit(1);
+  }
+
+  // Load or create config
+  let config: BuildConfig;
+  if (args.configFile) {
+    const configPath = path.resolve(args.configFile);
+    if (!fs.existsSync(configPath)) {
+      console.error(`Config file not found: ${configPath}`);
+      process.exit(1);
+    }
+    const configContent = fs.readFileSync(configPath, "utf8");
+    try {
+      config = parseBuildConfig(configContent);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`Failed to parse config: ${message}`);
+      process.exit(1);
+    }
+  } else {
+    config = getDefaultBuildConfig();
+  }
+
+  // Override arch if specified
+  if (args.arch) {
+    config.arch = args.arch;
+  }
+
+  // Run the build
+  try {
+    const result = await buildAssets(config, {
+      outputDir: args.outputDir,
+      verbose: !args.quiet,
+    });
+
+    if (!args.quiet) {
+      console.log();
+      console.log("Build successful!");
+      console.log(`  Output directory: ${result.outputDir}`);
+      console.log(`  Manifest: ${result.manifestPath}`);
+      console.log();
+      console.log("To use these assets:");
+      console.log(`  GONDOLIN_GUEST_DIR=${result.outputDir} gondolin bash`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Build failed: ${message}`);
+    process.exit(1);
+  }
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
 
@@ -643,6 +855,9 @@ async function main() {
       return;
     case "bash":
       await runBash(args);
+      return;
+    case "build":
+      await runBuild(args);
       return;
     default:
       console.error(`Unknown command: ${command}`);
