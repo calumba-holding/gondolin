@@ -32,33 +32,53 @@ const { errno: ERRNO } = os.constants;
 const VirtualProviderClass = VirtualProviderBase as unknown as { new (...args: any[]): any };
 
 export type FsRequestMessage = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "fs_request";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** operation name */
     op: string;
+    /** operation fields */
     req: Record<string, unknown>;
   };
 };
 
 export type FsResponseMessage = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "fs_response";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** operation name */
     op: string;
+    /** posix errno (0 = success) */
     err: number;
+    /** operation result fields */
     res?: Record<string, unknown>;
+    /** optional error detail */
     message?: string;
   };
 };
 
 type FsErrorMessage = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "error";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** stable error code */
     code: string;
+    /** human-readable error message */
     message: string;
   };
 };

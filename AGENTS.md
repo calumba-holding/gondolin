@@ -32,6 +32,12 @@ Guest builds use Zig (`zig build`). The image builder is in TypeScript (`host/sr
 - **Zig version:** 0.15.2 (see `guest/build.zig.zon`).
 - **Package manager:** pnpm (workspace root + `host/` package).
 
+### Field comments (TS interfaces/types + Zig structs)
+
+Add field comments when the meaning isn’t obvious, especially for **exported/public types**, **host↔guest/protocol/config/on-disk formats**, and anything with **units/encoding**, **sentinel values**, or **invariants**. Skip comments for truly self-explanatory internal fields.
+
+Use `/** … */` above TS properties and `/// …` above Zig fields. Keep comments **one line**, **noun-phrase style**, **no period**, and include units in backticks (e.g. `ms`, `bytes`). Put longer rationale on the struct/type doc comment, not per-field.
+
 ## Working with Tests
 
 - Tests are in `host/test/*.test.ts` with shared helpers in `host/test/helpers/`.

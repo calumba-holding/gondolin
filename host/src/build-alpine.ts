@@ -25,42 +25,42 @@ import type { Architecture } from "./build-config";
 // ---------------------------------------------------------------------------
 
 export interface AlpineBuildOptions {
-  /** Target architecture */
+  /** target architecture */
   arch: Architecture;
-  /** Alpine version (e.g. "3.23.0") */
+  /** alpine version (e.g. "3.23.0") */
   alpineVersion: string;
-  /** Alpine branch (e.g. "v3.23") */
+  /** alpine branch (e.g. "v3.23") */
   alpineBranch: string;
-  /** Full URL to the Alpine minirootfs tarball (overrides mirror) */
+  /** full url to the alpine minirootfs tarball (overrides mirror) */
   alpineUrl?: string;
-  /** Packages to install in the rootfs */
+  /** packages to install in the rootfs */
   rootfsPackages: string[];
-  /** Packages to install in the initramfs */
+  /** packages to install in the initramfs */
   initramfsPackages: string[];
-  /** Path to sandboxd binary */
+  /** path to the sandboxd binary */
   sandboxdBin: string;
-  /** Path to sandboxfs binary */
+  /** path to the sandboxfs binary */
   sandboxfsBin: string;
-  /** Volume label for the rootfs ext4 image */
+  /** volume label for the rootfs ext4 image */
   rootfsLabel: string;
-  /** Fixed size in MB for the rootfs image (auto if undefined) */
+  /** fixed rootfs image size in `mb` (auto when undefined) */
   rootfsSizeMb?: number;
-  /** Custom rootfs init script content (uses built-in if undefined) */
+  /** rootfs init script content (built-in when undefined) */
   rootfsInit?: string;
-  /** Custom initramfs init script content (uses built-in if undefined) */
+  /** initramfs init script content (built-in when undefined) */
   initramfsInit?: string;
-  /** Working directory for intermediate files */
+  /** working directory for intermediate files */
   workDir: string;
-  /** Directory for caching downloaded files */
+  /** directory for caching downloaded files */
   cacheDir: string;
-  /** Logging function */
+  /** log sink */
   log: (msg: string) => void;
 }
 
 export interface AlpineBuildResult {
-  /** Path to the rootfs ext4 image */
+  /** rootfs ext4 image path */
   rootfsImage: string;
-  /** Path to the compressed initramfs */
+  /** compressed initramfs path */
   initramfs: string;
 }
 
@@ -184,14 +184,19 @@ export async function buildAlpineImages(
 // Tar extraction (replaces external tar + Python tarfile)
 // ---------------------------------------------------------------------------
 
-/** A single entry parsed from a tar archive. */
+/** a single entry parsed from a tar archive */
 interface TarEntry {
+  /** entry name */
   name: string;
-  /** 0=file, 5=dir, 2=symlink, 1=hardlink */
+  /** tar type flag (0=file, 5=dir, 2=symlink, 1=hardlink) */
   type: number;
+  /** file mode bits */
   mode: number;
+  /** file size in `bytes` */
   size: number;
+  /** link target name */
   linkName: string;
+  /** file contents (null for non-files) */
   content: Buffer | null;
 }
 
@@ -422,13 +427,13 @@ function prepareTarget(target: string, isDir: boolean): void {
 // ---------------------------------------------------------------------------
 
 interface ApkMeta {
-  /** Package name */
+  /** package name */
   P: string;
-  /** Version */
+  /** package version */
   V: string;
-  /** Dependencies (space-separated) */
+  /** dependencies (space-separated) */
   D?: string;
-  /** Provides (space-separated) */
+  /** provides (space-separated) */
   p?: string;
   [key: string]: string | undefined;
 }

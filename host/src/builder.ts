@@ -77,22 +77,22 @@ function resolveAlpineConfig(config: BuildConfig): ResolvedAlpineConfig {
 }
 
 export interface BuildOptions {
-  /** Output directory for the built assets */
+  /** output directory for the built assets */
   outputDir: string;
-  /** Whether to print progress to stderr. Default: true */
+  /** whether to print progress to stderr (default: true) */
   verbose?: boolean;
-  /** Working directory for the build. Default: temp directory */
+  /** working directory for the build (default: temp directory) */
   workDir?: string;
-  /** Skip building sandboxd/sandboxfs binaries (use pre-built) */
+  /** whether to skip building sandboxd/sandboxfs binaries */
   skipBinaries?: boolean;
 }
 
 export interface BuildResult {
-  /** Path to the output directory */
+  /** output directory path */
   outputDir: string;
-  /** Path to the manifest file */
+  /** manifest file path */
   manifestPath: string;
-  /** The manifest data */
+  /** parsed manifest */
   manifest: AssetManifest;
 }
 

@@ -88,29 +88,32 @@ export const MANIFEST_FILENAME = "manifest.json";
  * Manifest describing the built assets.
  */
 export interface AssetManifest {
-  /** Manifest version for future compatibility */
+  /** manifest schema version */
   version: 1;
 
-  /** Build configuration used */
+  /** build configuration */
   config: BuildConfig;
 
-  /** Timestamp of the build */
+  /** build timestamp (iso 8601) */
   buildTime: string;
 
-  /** Asset file information */
+  /** asset filenames */
   assets: {
-    /** Kernel image filename */
+    /** kernel image filename */
     kernel: string;
-    /** Initramfs filename */
+    /** initramfs filename */
     initramfs: string;
-    /** Root filesystem filename */
+    /** rootfs filename */
     rootfs: string;
   };
 
-  /** Checksums for verification */
+  /** sha256 checksums (hex) */
   checksums: {
+    /** kernel checksum */
     kernel: string;
+    /** initramfs checksum */
     initramfs: string;
+    /** rootfs checksum */
     rootfs: string;
   };
 }
@@ -119,11 +122,11 @@ export interface AssetManifest {
  * Guest image asset paths.
  */
 export interface GuestAssets {
-  /** Path to the Linux kernel (vmlinuz-virt) */
+  /** linux kernel path */
   kernelPath: string;
-  /** Path to the compressed initramfs (initramfs.cpio.lz4) */
+  /** compressed initramfs path */
   initrdPath: string;
-  /** Path to the root filesystem image (rootfs.ext4) */
+  /** rootfs image path */
   rootfsPath: string;
 }
 

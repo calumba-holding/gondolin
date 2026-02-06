@@ -4,22 +4,33 @@ import net from "net";
 import { HttpHookRequest, HttpHooks, HttpRequestBlockedError } from "./qemu-net";
 
 export type SecretDefinition = {
+  /** host patterns this secret may be sent to */
   hosts: string[];
+  /** secret value */
   value: string;
 };
 
 export type CreateHttpHooksOptions = {
+  /** allowed host patterns (empty = allow all) */
   allowedHosts?: string[];
+  /** secret definitions keyed by env var name */
   secrets?: Record<string, SecretDefinition>;
+  /** whether to block internal ip ranges (default: true) */
   blockInternalRanges?: boolean;
+  /** custom allow callback */
   isAllowed?: HttpHooks["isAllowed"];
+  /** request hook */
   onRequest?: HttpHooks["onRequest"];
+  /** response hook */
   onResponse?: HttpHooks["onResponse"];
 };
 
 export type CreateHttpHooksResult = {
+  /** http hook implementation */
   httpHooks: HttpHooks;
+  /** environment mapping for secret placeholders */
   env: Record<string, string>;
+  /** resolved allowed hosts */
   allowedHosts: string[];
 };
 

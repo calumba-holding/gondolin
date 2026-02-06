@@ -76,38 +76,45 @@ type EnvInput = string[] | Record<string, string>;
 type ExecStdin = boolean | string | Buffer | Readable | AsyncIterable<Buffer>;
 
 export type VmVfsOptions = {
+  /** mount map (guest path -> provider) */
   mounts?: Record<string, VirtualProvider>;
+  /** vfs hook callbacks */
   hooks?: VfsHooks;
+  /** guest path for the fuse mount (default: "/data") */
   fuseMount?: string;
 };
 
 export type VMOptions = {
+  /** sandbox server options */
   server?: SandboxServerOptions;
+  /** whether to boot the vm immediately (default: true) */
   autoStart?: boolean;
+  /** http fetch implementation for asset downloads */
   fetch?: HttpFetch;
+  /** http interception hooks */
   httpHooks?: HttpHooks;
+  /** max intercepted http body size in `bytes` */
   maxHttpBodyBytes?: number;
+  /** vfs configuration (null disables vfs integration) */
   vfs?: VmVfsOptions | null;
+  /** default environment variables */
   env?: EnvInput;
-  /** Maximum memory for the VM (e.g., "1G", "512M"). Default: "1G" */
+  /** vm memory size (qemu syntax, default: "1G") */
   memory?: string;
-  /** Number of CPU cores for the VM. Default: 2 */
+  /** vm cpu count (default: 2) */
   cpus?: number;
 };
 
 export type ShellOptions = {
-  /** Command to run (default: bash) */
+  /** command to run (default: bash) */
   command?: string | string[];
-  /** Environment variables */
+  /** environment variables */
   env?: EnvInput;
-  /** Working directory */
+  /** working directory */
   cwd?: string;
-  /** Abort signal */
+  /** abort signal */
   signal?: AbortSignal;
-  /** 
-   * Auto-attach to process stdin/stdout/stderr.
-   * Default: true when running in a TTY
-   */
+  /** whether to attach to stdin/stdout/stderr (default: true in a tty) */
   attach?: boolean;
 };
 

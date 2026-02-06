@@ -25,37 +25,53 @@
  */
 export type ExecCommandMessage = {
   type: "exec";
+  /** request id */
   id: number;
+  /** executable */
   cmd: string;
+  /** argv entries (excluding cmd) */
   argv?: string[];
+  /** environment variables as `KEY=VALUE` */
   env?: string[];
+  /** working directory */
   cwd?: string;
+  /** whether stdin messages will be sent */
   stdin?: boolean;
+  /** whether to allocate a pty */
   pty?: boolean;
 };
 
 export type StdinCommandMessage = {
   type: "stdin";
+  /** request id */
   id: number;
+  /** stdin chunk as base64 */
   data?: string;
+  /** whether this chunk closes stdin */
   eof?: boolean;
 };
 
 export type PtyResizeCommandMessage = {
   type: "pty_resize";
+  /** request id */
   id: number;
+  /** pty row count */
   rows: number;
+  /** pty column count */
   cols: number;
 };
 
 export type LifecycleCommandMessage = {
   type: "lifecycle";
+  /** lifecycle action */
   action: "restart" | "shutdown";
 };
 
 export type BootCommandMessage = {
   type: "boot";
+  /** guest mountpoint for fuse (defaults to server config) */
   fuseMount?: string;
+  /** guest paths to bind into the fuse mount */
   fuseBinds?: string[];
 };
 
@@ -68,20 +84,27 @@ export type ClientMessage =
 
 export type ExecResponseMessage = {
   type: "exec_response";
+  /** request id */
   id: number;
+  /** process exit code */
   exit_code: number;
+  /** termination signal (if any) */
   signal?: number;
 };
 
 export type ErrorMessage = {
   type: "error";
+  /** request id (when the error is correlated to a request) */
   id?: number;
+  /** stable error code */
   code: string;
+  /** human-readable error message */
   message: string;
 };
 
 export type StatusMessage = {
   type: "status";
+  /** sandbox state */
   state: "starting" | "running" | "stopped";
 };
 

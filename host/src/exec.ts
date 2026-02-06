@@ -82,30 +82,21 @@ export class ExecResult {
  * Options for exec/execStream.
  */
 export type ExecOptions = {
-  /** Additional arguments (when command is a string) */
+  /** additional argv entries (when cmd is a string) */
   argv?: string[];
-  /** Environment variables */
+  /** environment variables */
   env?: string[] | Record<string, string>;
-  /** Working directory */
+  /** working directory */
   cwd?: string;
-  /** 
-   * Stdin input. Can be:
-   * - true: enable stdin for manual writing via write()/end()
-   * - string/Buffer: send this data as stdin
-   * - Readable/AsyncIterable: pipe this stream to stdin
-   */
+  /** stdin input (true enables manual write/end) */
   stdin?: boolean | string | Buffer | Readable | AsyncIterable<Buffer>;
-  /** Enable PTY mode for interactive commands */
+  /** whether to allocate a pty */
   pty?: boolean;
-  /** Encoding for string output (default: utf-8) */
+  /** string encoding for decoded output (default: utf-8) */
   encoding?: BufferEncoding;
-  /** Abort signal to cancel the command */
+  /** abort signal */
   signal?: AbortSignal;
-  /** 
-   * Buffer stdout/stderr for the result (default: true).
-   * Set to false to disable buffering for large outputs or when only streaming.
-   * When false, result.stdout and result.stderr will be empty strings.
-   */
+  /** whether to buffer stdout/stderr for the result (default: true) */
   buffer?: boolean;
 };
 

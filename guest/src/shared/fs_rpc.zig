@@ -18,17 +18,26 @@ pub const FieldValue = union(enum) {
 };
 
 pub const Field = struct {
+    /// field name
     name: []const u8,
+    /// field value
     value: FieldValue,
 };
 
 pub const FsResponse = struct {
+    /// allocator used for owned allocations
     allocator: std.mem.Allocator,
+    /// raw response frame bytes
     frame: []u8,
+    /// decoded cbor root value
     root: cbor.Value,
+    /// operation name
     op: []const u8,
+    /// posix errno (0 = success)
     err: i32,
+    /// result map entries (when present)
     res: ?[]cbor.Entry,
+    /// optional error detail
     message: ?[]const u8,
 
     pub fn deinit(self: *FsResponse) void {
@@ -38,8 +47,11 @@ pub const FsResponse = struct {
 };
 
 pub const FsRpcClient = struct {
+    /// allocator used for request/response buffers
     allocator: std.mem.Allocator,
+    /// virtio-serial fd
     fd: std.posix.fd_t,
+    /// next request id
     next_id: u32 = 1,
 
     pub fn init(allocator: std.mem.Allocator, fd: std.posix.fd_t) FsRpcClient {

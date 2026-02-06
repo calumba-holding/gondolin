@@ -8,22 +8,36 @@ const { errno: ERRNO } = os.constants;
 const VirtualProviderClass = VirtualProviderBase as unknown as { new (...args: any[]): any };
 
 export type VfsHookContext = {
+  /** operation name */
   op: string;
+  /** primary path */
   path?: string;
+  /** source path for rename/link */
   oldPath?: string;
+  /** destination path for rename/link */
   newPath?: string;
+  /** open flags */
   flags?: string | number;
+  /** file mode bits */
   mode?: number;
+  /** file handle id */
   fh?: number;
+  /** file offset in `bytes` */
   offset?: number;
+  /** length in `bytes` */
   length?: number;
+  /** size in `bytes` */
   size?: number;
+  /** payload bytes */
   data?: Buffer;
+  /** operation result */
   result?: unknown;
 };
 
 export type VfsHooks = {
+  /** hook called before the operation */
   before?: (context: VfsHookContext) => void | Promise<void>;
+  /** hook called after the operation */
   after?: (context: VfsHookContext) => void | Promise<void>;
 };
 

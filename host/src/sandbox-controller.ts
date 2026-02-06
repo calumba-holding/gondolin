@@ -30,21 +30,37 @@ function trackChild(child: ChildProcess) {
 }
 
 export type SandboxConfig = {
+  /** qemu binary path */
   qemuPath: string;
+  /** kernel image path */
   kernelPath: string;
+  /** initrd/initramfs image path */
   initrdPath: string;
+  /** optional rootfs image path */
   rootfsPath?: string;
+  /** vm memory size (qemu syntax, e.g. "1G") */
   memory: string;
+  /** vm cpu count */
   cpus: number;
+  /** virtio-serial control socket path */
   virtioSocketPath: string;
+  /** virtiofs/vfs socket path */
   virtioFsSocketPath: string;
+  /** kernel cmdline append string */
   append: string;
+  /** qemu machine type */
   machineType?: string;
+  /** qemu acceleration backend (e.g. kvm, hvf) */
   accel?: string;
+  /** qemu cpu model */
   cpu?: string;
+  /** guest console mode */
   console?: "stdio" | "none";
+  /** qemu net socket path */
   netSocketPath?: string;
+  /** guest mac address */
   netMac?: string;
+  /** whether to restart the vm automatically on exit */
   autoRestart: boolean;
 };
 

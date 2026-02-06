@@ -117,24 +117,37 @@ type TcpSession = {
 export type HttpFetch = typeof undiciFetch;
 
 export type HttpHookRequest = {
+  /** http method */
   method: string;
+  /** request url */
   url: string;
+  /** request headers */
   headers: Record<string, string>;
+  /** request body (null for empty) */
   body: Buffer | null;
 };
 
 export type HttpHookResponse = {
+  /** http status code */
   status: number;
+  /** http status text */
   statusText: string;
+  /** response headers */
   headers: Record<string, string>;
+  /** response body */
   body: Buffer;
 };
 
 export type HttpAllowInfo = {
+  /** request hostname */
   hostname: string;
+  /** resolved ip address */
   ip: string;
+  /** ip family */
   family: 4 | 6;
+  /** destination port */
   port: number;
+  /** url protocol */
   protocol: "http" | "https";
 };
 
@@ -151,8 +164,11 @@ export class HttpRequestBlockedError extends Error {
 }
 
 export type HttpHooks = {
+  /** allow/deny callback */
   isAllowed?: (info: HttpAllowInfo) => Promise<boolean> | boolean;
+  /** request rewrite hook */
   onRequest?: (request: HttpHookRequest) => Promise<HttpHookRequest | void> | HttpHookRequest | void;
+  /** response rewrite hook */
   onResponse?: (
     response: HttpHookResponse,
     request: HttpHookRequest
@@ -160,15 +176,25 @@ export type HttpHooks = {
 };
 
 export type QemuNetworkOptions = {
+  /** unix socket path for the qemu net backend */
   socketPath: string;
+  /** gateway ipv4 address */
   gatewayIP?: string;
+  /** guest ipv4 address */
   vmIP?: string;
+  /** gateway mac address */
   gatewayMac?: Buffer;
+  /** guest mac address */
   vmMac?: Buffer;
+  /** whether to enable debug logging */
   debug?: boolean;
+  /** http fetch implementation */
   fetch?: HttpFetch;
+  /** http interception hooks */
   httpHooks?: HttpHooks;
+  /** mitm ca directory path */
   mitmCertDir?: string;
+  /** max intercepted http body size in `bytes` */
   maxHttpBodyBytes?: number;
 };
 

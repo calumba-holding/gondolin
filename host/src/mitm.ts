@@ -7,9 +7,13 @@ import path from "node:path";
 import forge from "node-forge";
 
 export type MitmCa = {
+  /** ca private key */
   key: forge.pki.rsa.PrivateKey;
+  /** ca certificate */
   cert: forge.pki.Certificate;
+  /** ca private key pem */
   keyPem: string;
+  /** ca certificate pem */
   certPem: string;
 };
 

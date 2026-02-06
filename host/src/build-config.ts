@@ -13,19 +13,19 @@ export type Distro = "alpine" | "nixos";
  * Alpine Linux specific configuration.
  */
 export interface AlpineConfig {
-  /** Alpine version (e.g., "3.23.0") */
+  /** alpine version (e.g. "3.23.0") */
   version: string;
-  /** Alpine branch (e.g., "v3.23"). Defaults to major.minor of version. */
+  /** alpine branch (e.g. "v3.23", default: derived from version) */
   branch?: string;
-  /** Mirror URL. Defaults to official CDN. */
+  /** mirror url (default: official cdn) */
   mirror?: string;
-  /** Kernel package name. Defaults to "linux-virt". */
+  /** kernel package name (default: "linux-virt") */
   kernelPackage?: string;
-  /** Kernel image filename inside the package (e.g., "vmlinuz-virt"). */
+  /** kernel image filename in the package (e.g. "vmlinuz-virt") */
   kernelImage?: string;
-  /** Additional packages to install in the rootfs. */
+  /** extra packages to install in the rootfs */
   rootfsPackages?: string[];
-  /** Additional packages to install in the initramfs. */
+  /** extra packages to install in the initramfs */
   initramfsPackages?: string[];
 }
 
@@ -33,11 +33,11 @@ export interface AlpineConfig {
  * NixOS specific configuration (for future use).
  */
 export interface NixOSConfig {
-  /** NixOS channel (e.g., "nixos-24.05") */
+  /** nixos channel (e.g. "nixos-24.05") */
   channel: string;
-  /** Path to a Nix expression that builds the system */
+  /** nix expression path for building the system */
   systemExpression?: string;
-  /** Additional system packages */
+  /** extra system packages */
   packages?: string[];
 }
 
@@ -45,11 +45,11 @@ export interface NixOSConfig {
  * Container configuration for builds that require Linux tooling on macOS.
  */
 export interface ContainerConfig {
-  /** Whether to force container usage even on Linux. Default: false */
+  /** whether to force container usage even on linux (default: false) */
   force?: boolean;
-  /** Container image to use. Default: "alpine:3.23" */
+  /** container image to use (default: "alpine:3.23") */
   image?: string;
-  /** Container runtime. Default: auto-detect (docker, podman) */
+  /** container runtime (default: auto-detect) */
   runtime?: "docker" | "podman";
 }
 
@@ -57,9 +57,9 @@ export interface ContainerConfig {
  * Rootfs image configuration.
  */
 export interface RootfsConfig {
-  /** Volume label. Default: "gondolin-root" */
+  /** volume label (default: "gondolin-root") */
   label?: string;
-  /** Size in MB. If not specified, auto-calculated based on content. */
+  /** size in `mb` (auto when undefined) */
   sizeMb?: number;
 }
 
@@ -67,9 +67,9 @@ export interface RootfsConfig {
  * Custom init script configuration.
  */
 export interface InitConfig {
-  /** Path to custom rootfs init script. Uses default if not specified. */
+  /** custom rootfs init script path (built-in when undefined) */
   rootfsInit?: string;
-  /** Path to custom initramfs init script. Uses default if not specified. */
+  /** custom initramfs init script path (built-in when undefined) */
   initramfsInit?: string;
 }
 
@@ -77,31 +77,31 @@ export interface InitConfig {
  * Build configuration for generating custom VM assets.
  */
 export interface BuildConfig {
-  /** Target architecture */
+  /** target architecture */
   arch: Architecture;
 
-  /** Distribution to use */
+  /** distribution to use */
   distro: Distro;
 
-  /** Alpine-specific configuration (when distro is "alpine") */
+  /** alpine config (when distro is "alpine") */
   alpine?: AlpineConfig;
 
-  /** NixOS-specific configuration (when distro is "nixos") */
+  /** nixos config (when distro is "nixos") */
   nixos?: NixOSConfig;
 
-  /** Container configuration for cross-platform builds */
+  /** container config for cross-platform builds */
   container?: ContainerConfig;
 
-  /** Rootfs image configuration */
+  /** rootfs image config */
   rootfs?: RootfsConfig;
 
-  /** Custom init scripts */
+  /** custom init scripts */
   init?: InitConfig;
 
-  /** Path to custom sandboxd binary. Uses built-in if not specified. */
+  /** custom sandboxd binary path (built-in when undefined) */
   sandboxdPath?: string;
 
-  /** Path to custom sandboxfs binary. Uses built-in if not specified. */
+  /** custom sandboxfs binary path (built-in when undefined) */
   sandboxfsPath?: string;
 }
 

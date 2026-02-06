@@ -28,22 +28,33 @@ pub const ProtocolError = error{
 };
 
 pub const ExecRequest = struct {
+    /// correlation id
     id: u32,
+    /// executable
     cmd: []const u8,
+    /// argv entries (excluding cmd)
     argv: []const []const u8,
+    /// environment variables as `KEY=VALUE`
     env: []const []const u8,
+    /// working directory
     cwd: ?[]const u8,
+    /// whether stdin frames will be sent
     stdin: bool,
+    /// whether to allocate a pty
     pty: bool,
 };
 
 pub const StdinData = struct {
+    /// stdin chunk
     data: []const u8,
+    /// whether this chunk closes stdin
     eof: bool,
 };
 
 pub const PtyResize = struct {
+    /// pty row count
     rows: u32,
+    /// pty column count
     cols: u32,
 };
 
@@ -53,11 +64,17 @@ pub const InputMessage = union(enum) {
 };
 
 pub const FrameReader = struct {
+    /// allocator used for frame buffering
     allocator: std.mem.Allocator,
+    /// pending length prefix buffer
     len_buf: [4]u8 = undefined,
+    /// bytes read into len_buf
     len_read: usize = 0,
+    /// expected frame length in `bytes`
     frame_len: ?usize = null,
+    /// buffered frame payload
     frame: ?[]u8 = null,
+    /// bytes read into frame
     frame_read: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator) FrameReader {
@@ -128,8 +145,11 @@ pub const FrameReader = struct {
 };
 
 pub const FrameWriter = struct {
+    /// allocator used for frame buffering
     allocator: std.mem.Allocator,
+    /// pending output buffer (len-prefixed frames)
     buffer: std.ArrayList(u8) = .empty,
+    /// current write offset into buffer in `bytes`
     offset: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator) FrameWriter {

@@ -60,49 +60,73 @@ function normalizeDnsServers(servers?: string[]): string[] {
 }
 
 export type UdpSendMessage = {
+  /** nat/session key */
   key: string;
+  /** destination ipv4 address */
   dstIP: string;
+  /** destination udp port */
   dstPort: number;
+  /** source ipv4 address */
   srcIP: string;
+  /** source udp port */
   srcPort: number;
+  /** udp payload */
   payload: Buffer;
 };
 
 export type TcpConnectMessage = {
+  /** nat/session key */
   key: string;
+  /** destination ipv4 address */
   dstIP: string;
+  /** destination tcp port */
   dstPort: number;
+  /** source ipv4 address */
   srcIP: string;
+  /** source tcp port */
   srcPort: number;
 };
 
 export type TcpSendMessage = {
+  /** nat/session key */
   key: string;
+  /** tcp payload */
   data: Buffer;
 };
 
 export type TcpCloseMessage = {
+  /** nat/session key */
   key: string;
+  /** whether to force-close the socket */
   destroy: boolean;
 };
 
 export type TcpPauseMessage = {
+  /** nat/session key */
   key: string;
 };
 
 export type TcpResumeMessage = {
+  /** nat/session key */
   key: string;
 };
 
 export type TcpFlowProtocol = "http" | "tls";
 
 export type TcpFlowInfo = {
+  /** nat/session key */
   key: string;
+  /** source ipv4 address */
   srcIP: string;
+  /** source tcp port */
   srcPort: number;
+  /** destination ipv4 address */
   dstIP: string;
+  /** destination tcp port */
   dstPort: number;
+  /** detected flow protocol */
   protocol: TcpFlowProtocol;
+  /** http method when protocol is "http" */
   httpMethod?: string;
 };
 
@@ -131,18 +155,21 @@ type TcpSession = {
 };
 
 export type NetworkStackOptions = {
+  /** gateway ipv4 address */
   gatewayIP?: string;
+  /** guest ipv4 address */
   vmIP?: string;
+  /** gateway mac address */
   gatewayMac?: Buffer;
+  /** guest mac address */
   vmMac?: Buffer;
+  /** dns server ipv4 addresses */
   dnsServers?: string[];
+  /** network event callbacks */
   callbacks: NetworkCallbacks;
+  /** policy callback for allowing a sniffed tcp flow */
   allowTcpFlow?: (info: TcpFlowInfo) => boolean;
-
-  /**
-   * Hard cap for QEMU TX buffering (bytes, including the 4-byte frame length prefix).
-   * Prevents unbounded memory growth if QEMU stops draining.
-   */
+  /** qemu tx buffer hard cap in `bytes` (includes the 4-byte length prefix) */
   txQueueMaxBytes?: number;
 };
 
@@ -155,11 +182,13 @@ export type TxPriority = "high" | "low";
  * because the QEMU TX queue hit its hard cap.
  */
 export type TxDropInfo = {
+  /** queue priority */
   priority: TxPriority;
-  /** Bytes dropped (for drops: size of the packet that was not enqueued; for evictions: total bytes evicted). */
+  /** bytes dropped/evicted in `bytes` */
   bytes: number;
+  /** drop/eviction reason */
   reason: "queue-full" | "packet-too-large" | "evicted";
-  /** Bytes evicted from the low-priority queue to make room (high priority only). */
+  /** bytes evicted from the low-priority queue in `bytes` (high priority only) */
   evictedBytes?: number;
 };
 

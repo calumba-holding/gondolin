@@ -3,69 +3,110 @@ import cbor from "cbor";
 export const MAX_FRAME = 4 * 1024 * 1024;
 
 export type ExecOutput = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "exec_output";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** output stream */
     stream: "stdout" | "stderr";
+    /** raw output bytes */
     data: Buffer;
   };
 };
 
 export type ExecResponse = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "exec_response";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** process exit code */
     exit_code: number;
+    /** termination signal (if any) */
     signal?: number;
   };
 };
 
 export type ErrorResponse = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "error";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** stable error code */
     code: string;
+    /** human-readable error message */
     message: string;
   };
 };
 
 export type FsRequest = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "fs_request";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** operation name */
     op: string;
+    /** operation fields */
     req: Record<string, unknown>;
   };
 };
 
 export type FsResponse = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "fs_response";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** operation name */
     op: string;
+    /** operation error code */
     err: number;
+    /** operation result fields */
     res?: Record<string, unknown>;
+    /** optional error detail */
     message?: string;
   };
 };
 
 export type VfsReady = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "vfs_ready";
+  /** request id */
   id: number;
+  /** payload */
   p: Record<string, never>;
 };
 
 export type VfsError = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "vfs_error";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** error message */
     message: string;
   };
 };
@@ -80,35 +121,57 @@ export type IncomingMessage =
   | VfsError;
 
 export type ExecRequest = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "exec_request";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** executable */
     cmd: string;
+    /** argv entries (excluding cmd) */
     argv?: string[];
+    /** environment variables as `KEY=VALUE` */
     env?: string[];
+    /** working directory */
     cwd?: string;
+    /** whether stdin messages will be sent */
     stdin?: boolean;
+    /** whether to allocate a pty */
     pty?: boolean;
   };
 };
 
 export type StdinData = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "stdin_data";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** stdin chunk */
     data: Buffer;
+    /** whether this chunk closes stdin */
     eof?: boolean;
   };
 };
 
 export type PtyResize = {
+  /** protocol version */
   v: number;
+  /** message type */
   t: "pty_resize";
+  /** request id */
   id: number;
+  /** payload */
   p: {
+    /** pty row count */
     rows: number;
+    /** pty column count */
     cols: number;
   };
 };

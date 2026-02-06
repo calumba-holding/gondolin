@@ -28,14 +28,20 @@ const LINUX_OPEN_FLAGS = {
 };
 
 export type FsRpcMetrics = {
+  /** total request count */
   requests: number;
+  /** total error count */
   errors: number;
+  /** total bytes read in `bytes` */
   bytesRead: number;
+  /** total bytes written in `bytes` */
   bytesWritten: number;
+  /** per-op request counts */
   ops: Record<string, number>;
 };
 
 export type FsRpcServiceOptions = {
+  /** optional log sink */
   logger?: (message: string) => void;
 };
 

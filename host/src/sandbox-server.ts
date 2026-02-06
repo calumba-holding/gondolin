@@ -59,38 +59,57 @@ function resolveEnvNumber(name: string, fallback: number) {
   return parsed;
 }
 
+/**
+ * sandbox server options
+ *
+ * imagePath can be either:
+ * - a directory containing the guest assets (kernel/initrd/rootfs)
+ * - an object with explicit asset paths
+ */
 export type SandboxServerOptions = {
+  /** qemu binary path */
   qemuPath?: string;
-  /**
-   * Path to guest image assets.
-   * 
-   * Can be either:
-   * - A string path to a directory containing the assets
-   * - An object with explicit paths: `{ kernelPath, initrdPath, rootfsPath }`
-   * 
-   * If not provided, assets are resolved from GONDOLIN_GUEST_DIR,
-   * local development paths, or downloaded automatically.
-   */
+  /** guest asset directory or explicit asset paths */
   imagePath?: ImagePath;
+  /** vm memory size (qemu syntax, e.g. "1G") */
   memory?: string;
+  /** vm cpu count */
   cpus?: number;
+  /** virtio-serial control socket path */
   virtioSocketPath?: string;
+  /** virtiofs/vfs socket path */
   virtioFsSocketPath?: string;
+  /** qemu net socket path */
   netSocketPath?: string;
+  /** guest mac address */
   netMac?: string;
+  /** whether to enable networking */
   netEnabled?: boolean;
+  /** whether to enable network debug logging */
   netDebug?: boolean;
+  /** qemu machine type */
   machineType?: string;
+  /** qemu acceleration backend (e.g. kvm, hvf) */
   accel?: string;
+  /** qemu cpu model */
   cpu?: string;
+  /** guest console mode */
   console?: "stdio" | "none";
+  /** whether to restart the vm automatically on exit */
   autoRestart?: boolean;
+  /** kernel cmdline append string */
   append?: string;
+  /** max stdin buffered per process in `bytes` */
   maxStdinBytes?: number;
+  /** http fetch implementation for asset downloads */
   fetch?: HttpFetch;
+  /** http interception hooks */
   httpHooks?: HttpHooks;
+  /** max intercepted http body size in `bytes` */
   maxHttpBodyBytes?: number;
+  /** mitm ca directory path */
   mitmCertDir?: string;
+  /** vfs provider to expose under the fuse mount */
   vfsProvider?: VirtualProvider;
 };
 
@@ -100,29 +119,53 @@ type SandboxFsConfig = {
 };
 
 export type ResolvedSandboxServerOptions = {
+  /** qemu binary path */
   qemuPath: string;
+  /** kernel image path */
   kernelPath: string;
+  /** initrd/initramfs image path */
   initrdPath: string;
+  /** rootfs image path */
   rootfsPath: string;
+  /** vm memory size (qemu syntax, e.g. "1G") */
   memory: string;
+  /** vm cpu count */
   cpus: number;
+  /** virtio-serial control socket path */
   virtioSocketPath: string;
+  /** virtiofs/vfs socket path */
   virtioFsSocketPath: string;
+  /** qemu net socket path */
   netSocketPath: string;
+  /** guest mac address */
   netMac: string;
+  /** whether networking is enabled */
   netEnabled: boolean;
+  /** whether network debug logging is enabled */
   netDebug: boolean;
+  /** qemu machine type */
   machineType?: string;
+  /** qemu acceleration backend (e.g. kvm, hvf) */
   accel?: string;
+  /** qemu cpu model */
   cpu?: string;
+  /** guest console mode */
   console?: "stdio" | "none";
+  /** whether to restart the vm automatically on exit */
   autoRestart: boolean;
+  /** kernel cmdline append string */
   append?: string;
+  /** max stdin buffered per process in `bytes` */
   maxStdinBytes: number;
+  /** max intercepted http body size in `bytes` */
   maxHttpBodyBytes: number;
+  /** http fetch implementation for asset downloads */
   fetch?: HttpFetch;
+  /** http interception hooks */
   httpHooks?: HttpHooks;
+  /** mitm ca directory path */
   mitmCertDir?: string;
+  /** vfs provider to expose under the fuse mount */
   vfsProvider: VirtualProvider | null;
 };
 
@@ -582,7 +625,9 @@ type SandboxClient = {
 };
 
 export type SandboxConnection = {
+  /** send a control message to the guest */
   send: (message: ClientMessage) => void;
+  /** close the underlying connection */
   close: () => void;
 };
 

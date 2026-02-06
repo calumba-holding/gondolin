@@ -18,13 +18,18 @@ pub const Value = union(enum) {
 };
 
 pub const Entry = struct {
+    /// map key
     key: Value,
+    /// map value
     value: Value,
 };
 
 pub const Decoder = struct {
+    /// allocator used for arrays/maps
     allocator: std.mem.Allocator,
+    /// input buffer
     buf: []const u8,
+    /// current read offset in `bytes`
     pos: usize = 0,
 
     pub fn init(allocator: std.mem.Allocator, buf: []const u8) Decoder {
