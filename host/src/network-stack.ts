@@ -138,6 +138,29 @@ export type NetworkStackOptions = {
   dnsServers?: string[];
   callbacks: NetworkCallbacks;
   allowTcpFlow?: (info: TcpFlowInfo) => boolean;
+
+  /**
+   * Hard cap for QEMU TX buffering (bytes, including the 4-byte frame length prefix).
+   * Prevents unbounded memory growth if QEMU stops draining.
+   */
+  txQueueMaxBytes?: number;
+};
+
+export type TxPriority = "high" | "low";
+
+/**
+ * Payload for the `"tx-drop"` event emitted by {@link NetworkStack}.
+ *
+ * Emitted when an outgoing (host->guest) ethernet frame is dropped (or evicted)
+ * because the QEMU TX queue hit its hard cap.
+ */
+export type TxDropInfo = {
+  priority: TxPriority;
+  /** Bytes dropped (for drops: size of the packet that was not enqueued; for evictions: total bytes evicted). */
+  bytes: number;
+  reason: "queue-full" | "packet-too-large" | "evicted";
+  /** Bytes evicted from the low-priority queue to make room (high priority only). */
+  evictedBytes?: number;
 };
 
 export class NetworkStack extends EventEmitter {
@@ -154,8 +177,13 @@ export class NetworkStack extends EventEmitter {
   private readonly MAX_FLOW_SNIFF = 8 * 1024;
 
   private rxBuffer = Buffer.alloc(0);
-  private txQueue: Buffer[] = [];
+
+  private txQueueHigh: Buffer[] = [];
+  private txQueueLow: Buffer[] = [];
   private txQueueSize = 0;
+  private txQueueHighSize = 0;
+
+  private readonly TX_QUEUE_MAX_BYTES: number;
 
   private readonly TX_BUFFER_HIGH_WATER = 16 * 1024;
   private readonly TX_BUFFER_LOW_WATER = 4 * 1024;
@@ -172,13 +200,16 @@ export class NetworkStack extends EventEmitter {
     this.dnsServers = normalizeDnsServers(options.dnsServers);
     this.callbacks = options.callbacks;
     this.allowTcpFlow = options.allowTcpFlow ?? (() => true);
+    this.TX_QUEUE_MAX_BYTES = options.txQueueMaxBytes ?? 4 * 1024 * 1024;
   }
 
   reset() {
     this.natTable.clear();
     this.rxBuffer = Buffer.alloc(0);
-    this.txQueue = [];
+    this.txQueueHigh = [];
+    this.txQueueLow = [];
     this.txQueueSize = 0;
+    this.txQueueHighSize = 0;
     this.txPaused.clear();
   }
 
@@ -209,24 +240,29 @@ export class NetworkStack extends EventEmitter {
     let total = 0;
     const chunks: Buffer[] = [];
 
-    while (remaining > 0 && this.txQueue.length > 0) {
-      const chunk = this.txQueue[0];
-      if (chunk.length <= remaining) {
-        chunks.push(chunk);
-        total += chunk.length;
-        remaining -= chunk.length;
-        this.txQueue.shift();
+    while (remaining > 0 && this.txQueueSize > 0) {
+      const useHigh = this.txQueueHigh.length > 0;
+      const queue = useHigh ? this.txQueueHigh : this.txQueueLow;
+
+      const head = queue[0];
+      const consumed = Math.min(head.length, remaining);
+      chunks.push(consumed === head.length ? head : head.subarray(0, consumed));
+
+      if (consumed === head.length) {
+        queue.shift();
       } else {
-        chunks.push(chunk.subarray(0, remaining));
-        this.txQueue[0] = chunk.subarray(remaining);
-        total += remaining;
-        remaining = 0;
+        queue[0] = head.subarray(consumed);
+      }
+
+      remaining -= consumed;
+      total += consumed;
+      this.txQueueSize -= consumed;
+      if (useHigh) {
+        this.txQueueHighSize -= consumed;
       }
     }
 
-    this.txQueueSize -= total;
-
-    if (this.txQueueSize < this.TX_BUFFER_LOW_WATER && this.txPaused.size > 0) {
+    if (this.txQueueHighSize < this.TX_BUFFER_LOW_WATER && this.txPaused.size > 0) {
       for (const key of this.txPaused) {
         this.callbacks.onTcpResume({ key });
       }
@@ -252,8 +288,7 @@ export class NetworkStack extends EventEmitter {
     packet.writeUInt32BE(frame.length, 0);
     frame.copy(packet, 4);
 
-    // XXX: cap txBuffer growth or drop frames when QEMU isn't draining.
-    this.enqueueTx(packet);
+    this.enqueueTx(packet, this.classifyTxPriority(proto, payload));
   }
 
   sendBroadcast(payload: Buffer, proto: number) {
@@ -269,13 +304,92 @@ export class NetworkStack extends EventEmitter {
     packet.writeUInt32BE(frame.length, 0);
     frame.copy(packet, 4);
 
-    // XXX: cap txBuffer growth or drop frames when QEMU isn't draining.
-    this.enqueueTx(packet);
+    this.enqueueTx(packet, this.classifyTxPriority(proto, payload));
   }
 
-  private enqueueTx(packet: Buffer) {
+  private classifyTxPriority(etherType: number, payload: Buffer): TxPriority {
+    // ARP and DHCP are required for basic networking to work; keep them high priority.
+    if (etherType === ETH_P_ARP) return "high";
+    if (etherType !== ETH_P_IP) return "low";
+
+    // IPv4 header is at least 20 bytes.
+    if (payload.length < 20) return "low";
+    const version = payload[0] >> 4;
+    if (version !== 4) return "low";
+
+    const ipProto = payload[9];
+    if (ipProto === IP_PROTO_TCP) return "high";
+    return "low";
+  }
+
+  /**
+   * Enqueues a QEMU-framed ethernet packet for host->guest delivery.
+   *
+   * Emits:
+   * - `"network-activity"` when something is queued
+   * - `"tx-drop"` with {@link TxDropInfo} when a packet is dropped/evicted due to queue limits
+   */
+  private enqueueTx(packet: Buffer, priority: TxPriority) {
     if (packet.length === 0) return;
-    this.txQueue.push(packet);
+
+    if (packet.length > this.TX_QUEUE_MAX_BYTES) {
+      const info: TxDropInfo = {
+        priority,
+        bytes: packet.length,
+        reason: "packet-too-large",
+      };
+      this.emit("tx-drop", info);
+      return;
+    }
+
+    // Enforce a hard cap to avoid unbounded memory growth if QEMU stops draining.
+    if (this.txQueueSize + packet.length > this.TX_QUEUE_MAX_BYTES) {
+      if (priority === "low") {
+        const info: TxDropInfo = {
+          priority,
+          bytes: packet.length,
+          reason: "queue-full",
+        };
+        this.emit("tx-drop", info);
+        return;
+      }
+
+      // For high-priority packets (TCP/ARP), evict low-priority packets first.
+      let evictedBytes = 0;
+      while (this.txQueueLow.length > 0 && this.txQueueSize + packet.length > this.TX_QUEUE_MAX_BYTES) {
+        const evicted = this.txQueueLow.shift()!;
+        evictedBytes += evicted.length;
+        this.txQueueSize -= evicted.length;
+      }
+
+      if (evictedBytes > 0) {
+        const info: TxDropInfo = {
+          priority: "low",
+          bytes: evictedBytes,
+          reason: "evicted",
+        };
+        this.emit("tx-drop", info);
+      }
+
+      if (this.txQueueSize + packet.length > this.TX_QUEUE_MAX_BYTES) {
+        const info: TxDropInfo = {
+          priority,
+          bytes: packet.length,
+          reason: "queue-full",
+          evictedBytes,
+        };
+        this.emit("tx-drop", info);
+        return;
+      }
+    }
+
+    if (priority === "high") {
+      this.txQueueHigh.push(packet);
+      this.txQueueHighSize += packet.length;
+    } else {
+      this.txQueueLow.push(packet);
+    }
+
     this.txQueueSize += packet.length;
     this.emit("network-activity");
   }
@@ -854,7 +968,8 @@ export class NetworkStack extends EventEmitter {
     packet.writeUInt32BE(frame.length, 0);
     frame.copy(packet, 4);
 
-    this.enqueueTx(packet);
+    // DHCP is required for connectivity; treat it as high priority even though it's UDP.
+    this.enqueueTx(packet, "high");
     this.emit("dhcp", msgType === DHCP_OFFER ? "OFFER" : "ACK", this.vmIP);
   }
 
@@ -929,7 +1044,7 @@ export class NetworkStack extends EventEmitter {
       offset += chunkSize;
     }
 
-    if (this.txQueueSize > this.TX_BUFFER_HIGH_WATER && !this.txPaused.has(message.key)) {
+    if (this.txQueueHighSize > this.TX_BUFFER_HIGH_WATER && !this.txPaused.has(message.key)) {
       this.txPaused.add(message.key);
       this.callbacks.onTcpPause({ key: message.key });
     }

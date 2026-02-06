@@ -849,3 +849,127 @@ test("network-stack: handleUdpResponse sets UDP checksum correctly", () => {
   const normalized = expected === 0 ? 0xffff : expected;
   assert.equal(got, normalized);
 });
+
+test("network-stack: caps QEMU tx buffering and drops low-priority frames", () => {
+  const gatewayMac = mac([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xdd]);
+  const vmMac = mac([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+  const txQueueMaxBytes = 1024;
+
+  const stack = new NetworkStack({
+    gatewayIP: "192.168.127.1",
+    vmIP: "192.168.127.3",
+    gatewayMac,
+    vmMac,
+    dnsServers: ["8.8.8.8"],
+    txQueueMaxBytes,
+    callbacks: {
+      onUdpSend: () => {},
+      onTcpConnect: () => {},
+      onTcpSend: () => {},
+      onTcpClose: () => {},
+      onTcpPause: () => {},
+      onTcpResume: () => {},
+    },
+  });
+
+  let drops = 0;
+  stack.on("tx-drop", () => {
+    drops++;
+  });
+
+  // Generate many ICMP echo replies (low-priority) without draining QEMU.
+  for (let i = 0; i < 200; i++) {
+    const req = buildIcmpEchoRequest({ id: 42, seq: i, payload: Buffer.alloc(32, 0xaa) });
+    const packet = buildIPv4Packet({
+      srcIP: ip([192, 168, 127, 3]),
+      dstIP: ip([192, 168, 127, 1]),
+      protocol: 1,
+      payload: req,
+    });
+    const frame = buildEthernetFrame({
+      dstMac: gatewayMac,
+      srcMac: vmMac,
+      etherType: 0x0800,
+      payload: packet,
+    });
+    stack.writeToNetwork(qemuPacketFromFrame(frame));
+  }
+
+  const tx = drainAllQemuTx(stack);
+  assert.ok(tx.length <= txQueueMaxBytes, `tx stream length (${tx.length}) exceeds cap (${txQueueMaxBytes})`);
+
+  const frames = decodeFramesFromQemuData(tx);
+  assert.ok(frames.length < 200, "expected some frames to be dropped");
+  assert.ok(drops > 0, "expected tx-drop events");
+});
+
+test("network-stack: high-priority TX evicts low-priority frames when capped", () => {
+  const gatewayMac = mac([0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xdd]);
+  const vmMac = mac([0x02, 0x00, 0x00, 0x00, 0x00, 0x01]);
+
+  const txQueueMaxBytes = 512;
+
+  const stack = new NetworkStack({
+    gatewayIP: "192.168.127.1",
+    vmIP: "192.168.127.3",
+    gatewayMac,
+    vmMac,
+    dnsServers: ["8.8.8.8"],
+    txQueueMaxBytes,
+    callbacks: {
+      onUdpSend: () => {},
+      onTcpConnect: () => {},
+      onTcpSend: () => {},
+      onTcpClose: () => {},
+      onTcpPause: () => {},
+      onTcpResume: () => {},
+    },
+  });
+
+  // Fill the buffer with low-priority traffic.
+  for (let i = 0; i < 100; i++) {
+    const req = buildIcmpEchoRequest({ id: 1, seq: i, payload: Buffer.alloc(16, 0xbb) });
+    const packet = buildIPv4Packet({
+      srcIP: ip([192, 168, 127, 3]),
+      dstIP: ip([192, 168, 127, 1]),
+      protocol: 1,
+      payload: req,
+    });
+    const frame = buildEthernetFrame({
+      dstMac: gatewayMac,
+      srcMac: vmMac,
+      etherType: 0x0800,
+      payload: packet,
+    });
+    stack.writeToNetwork(qemuPacketFromFrame(frame));
+  }
+
+  // Now trigger an ARP reply (high priority). It should make it into the queue
+  // even if that means evicting low-priority frames.
+  const arp = Buffer.alloc(28);
+  arp.writeUInt16BE(1, 0); // htype
+  arp.writeUInt16BE(0x0800, 2); // ptype
+  arp[4] = 6; // hlen
+  arp[5] = 4; // plen
+  arp.writeUInt16BE(1, 6); // op=request
+  vmMac.copy(arp, 8);
+  ip([192, 168, 127, 3]).copy(arp, 14);
+  // target MAC is ignored by implementation
+  ip([192, 168, 127, 1]).copy(arp, 24);
+
+  const arpFrame = buildEthernetFrame({
+    dstMac: gatewayMac,
+    srcMac: vmMac,
+    etherType: 0x0806,
+    payload: arp,
+  });
+  stack.writeToNetwork(qemuPacketFromFrame(arpFrame));
+
+  const tx = drainAllQemuTx(stack);
+  assert.ok(tx.length <= txQueueMaxBytes, `tx stream length (${tx.length}) exceeds cap (${txQueueMaxBytes})`);
+
+  const frames = decodeFramesFromQemuData(tx);
+  const etherTypes = frames.map((frame) => parseEthernet(frame).etherType);
+  assert.ok(etherTypes.includes(0x0806), "expected ARP reply to be present despite low-priority queue being full");
+});
