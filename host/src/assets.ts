@@ -3,7 +3,7 @@ import path from "path";
 import os from "os";
 import { createWriteStream } from "fs";
 import { pipeline } from "stream/promises";
-import { execSync } from "child_process";
+import * as child_process from "child_process";
 import { createHash } from "crypto";
 import type { BuildConfig } from "./build-config";
 
@@ -275,7 +275,7 @@ async function downloadAndExtract(assetDir: string): Promise<void> {
 
     // Extract
     process.stderr.write(`  Extracting to ${assetDir}...\n`);
-    execSync(`tar -xzf "${bundleName}"`, { cwd: assetDir, stdio: "pipe" });
+    child_process.execSync(`tar -xzf "${bundleName}"`, { cwd: assetDir, stdio: "pipe" });
 
     // Verify extraction
     if (!assetsExist(assetDir)) {
@@ -350,3 +350,16 @@ export function getAssetDirectory(): string {
 export function hasGuestAssets(): boolean {
   return assetsExist(getAssetDir());
 }
+
+/** @internal */
+// Expose internal helpers for unit tests. Not part of the public API.
+export const __test = {
+  resolveAssetVersion,
+  getAssetBundleName,
+  getAssetDir,
+  assetsExist,
+  downloadAndExtract,
+  resetAssetVersionCache: () => {
+    cachedAssetVersion = null;
+  },
+};
