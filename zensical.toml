@@ -23,6 +23,9 @@ extra_javascript = [
 # GitHub repository integration (repo link + optional edit/view buttons)
 repo_url = "https://github.com/earendil-works/gondolin"
 
+# Footer copyright text (HTML allowed)
+copyright = "<a href=\"https://earendil.com/\">Earendil Inc.</a>"
+
 # Sidebar navigation
 nav = [
     {"Home" = "index.md"},
