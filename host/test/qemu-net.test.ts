@@ -9,6 +9,7 @@ import tls from "node:tls";
 import forge from "node-forge";
 
 import { HttpRequestBlockedError, QemuNetworkBackend, __test } from "../src/qemu-net";
+import { EventEmitter } from "node:events";
 
 function makeBackend(options?: Partial<ConstructorParameters<typeof QemuNetworkBackend>[0]>) {
   return new QemuNetworkBackend({
@@ -19,6 +20,13 @@ function makeBackend(options?: Partial<ConstructorParameters<typeof QemuNetworkB
     ...options,
   });
 }
+
+test("qemu-net: trusted dns mode requires ipv4 resolvers (no silent fallback)", () => {
+  assert.throws(
+    () => makeBackend({ dns: { mode: "trusted", trustedServers: ["::1"] } as any }),
+    /requires at least one IPv4 resolver/i
+  );
+});
 
 test("qemu-net: parseHttpRequest parses content-length and preserves remaining", () => {
   const backend = makeBackend({ maxHttpBodyBytes: 1024 });
@@ -1066,4 +1074,111 @@ test("qemu-net: caps guest->upstream pendingWrites and aborts on overflow", () =
   assert.equal(stackCalls.length, 1);
   assert.deepEqual(stackCalls[0], { key });
   assert.equal((backend as any).tcpSessions.has(key), false);
+});
+
+function buildQueryA(name: string, id = 0x1234): Buffer {
+  const labels = name.split(".").filter(Boolean);
+  const qnameParts: Buffer[] = [];
+  for (const label of labels) {
+    const b = Buffer.from(label, "ascii");
+    qnameParts.push(Buffer.from([b.length]));
+    qnameParts.push(b);
+  }
+  qnameParts.push(Buffer.from([0]));
+  const qname = Buffer.concat(qnameParts);
+
+  const header = Buffer.alloc(12);
+  header.writeUInt16BE(id, 0);
+  header.writeUInt16BE(0x0100, 2); // RD
+  header.writeUInt16BE(1, 4); // QDCOUNT
+  header.writeUInt16BE(0, 6);
+  header.writeUInt16BE(0, 8);
+  header.writeUInt16BE(0, 10);
+
+  const tail = Buffer.alloc(4);
+  tail.writeUInt16BE(1, 0); // A
+  tail.writeUInt16BE(1, 2); // IN
+
+  return Buffer.concat([header, qname, tail]);
+}
+
+class FakeUdpSocket extends EventEmitter {
+  lastSend: { buf: Buffer; port: number; address: string } | null = null;
+
+  send(buf: Buffer, port: number, address: string) {
+    this.lastSend = { buf: Buffer.from(buf), port, address };
+  }
+
+  close() {
+    // no-op
+  }
+}
+
+test("qemu-net: dns trusted mode rewrites upstream resolver and preserves guest dst ip", () => {
+  const fake = new FakeUdpSocket();
+  const backend = makeBackend({
+    dns: { mode: "trusted", trustedServers: ["1.1.1.1"] },
+    udpSocketFactory: () => fake as any,
+  });
+
+  const responses: any[] = [];
+  (backend as any).stack = {
+    handleUdpResponse: (msg: any) => responses.push(msg),
+  };
+
+  const payload = buildQueryA("example.com", 0x1111);
+
+  (backend as any).handleUdpSend({
+    key: "udp1",
+    srcIP: "192.168.127.3",
+    srcPort: 40000,
+    dstIP: "9.9.9.9",
+    dstPort: 53,
+    payload,
+  });
+
+  assert.ok(fake.lastSend);
+  assert.equal(fake.lastSend.address, "1.1.1.1");
+  assert.equal(fake.lastSend.port, 53);
+
+  fake.emit("message", Buffer.from([0, 1, 2, 3]), { address: "1.1.1.1", port: 53 });
+
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].dstIP, "9.9.9.9");
+  assert.equal(responses[0].dstPort, 53);
+});
+
+test("qemu-net: dns synthetic mode replies without opening udp socket", () => {
+  let created = 0;
+  const backend = makeBackend({
+    dns: { mode: "synthetic" },
+    udpSocketFactory: () => {
+      created += 1;
+      return new FakeUdpSocket() as any;
+    },
+  });
+
+  const responses: any[] = [];
+  (backend as any).stack = {
+    handleUdpResponse: (msg: any) => responses.push(msg),
+  };
+
+  const payload = buildQueryA("example.com", 0x2222);
+
+  (backend as any).handleUdpSend({
+    key: "udp2",
+    srcIP: "192.168.127.3",
+    srcPort: 40001,
+    dstIP: "192.168.127.1",
+    dstPort: 53,
+    payload,
+  });
+
+  assert.equal(created, 0);
+  assert.equal(responses.length, 1);
+
+  const response = responses[0].data as Buffer;
+  assert.equal(response.readUInt16BE(0), 0x2222);
+  assert.equal(response.readUInt16BE(6), 1); // ANCOUNT
+  assert.deepEqual([...response.subarray(response.length - 4)], [192, 0, 2, 1]);
 });

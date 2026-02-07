@@ -144,7 +144,8 @@ Key enforcement points:
     This prevents the guest from tunneling arbitrary TCP protocols.
 
 2. **UDP is blocked except for DNS**
-    - Only UDP destination port `53` is forwarded; other UDP is blocked. See note on DNS below.
+    - Only UDP destination port `53` is handled; other UDP is blocked.
+    - DNS handling is mode-dependent; by default Gondolin uses **synthetic DNS** (no upstream) to prevent DNS tunneling.
 
 3. **HTTP/HTTPS is bridged by the host**
 

@@ -220,6 +220,10 @@ Notable consequences:
 - ICMP echo requests in the guest "work", but are synthetic (you can ping any address).
 - HTTP redirects are resolved on the host and hidden from the guest (the guest only
   sees the final response), so redirects cannot escape the allowlist.
+- DNS is available in multiple modes:
+  - `synthetic` (default): no upstream DNS, returns synthetic answers
+  - `trusted`: forwards queries only to trusted host resolvers (prevents DNS-as-UDP-tunnel)
+  - `open`: forwards UDP/53 to the destination IP the guest targeted
 - Even though the guest does DNS resolutions, they're largely disregarded for
   policy; the host enforces policy against the HTTP `Host` header and does its own
   resolution to prevent DNS rebinding attacks.

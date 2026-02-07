@@ -14,6 +14,7 @@ import { monitorEventLoopDelay, performance } from "perf_hooks";
 import forge from "node-forge";
 
 import { loadOrCreateMitmCa, resolveMitmCertDir } from "./mitm";
+import { buildSyntheticDnsResponse, isProbablyDnsPacket, parseDnsQuery } from "./dns";
 import { lookup } from "dns/promises";
 import { Agent, fetch as undiciFetch } from "undici";
 
@@ -33,6 +34,27 @@ const DEFAULT_MAX_TCP_PENDING_WRITE_BYTES = 4 * 1024 * 1024;
 
 const DEFAULT_TLS_CONTEXT_CACHE_MAX_ENTRIES = 256;
 const DEFAULT_TLS_CONTEXT_CACHE_TTL_MS = 10 * 60 * 1000;
+
+const DEFAULT_DNS_MODE: DnsMode = "synthetic";
+const DEFAULT_SYNTHETIC_DNS_IPV4 = "192.0.2.1";
+const DEFAULT_SYNTHETIC_DNS_IPV6 = "2001:db8::1";
+const DEFAULT_SYNTHETIC_DNS_TTL_SECONDS = 60;
+
+function normalizeIpv4Servers(servers?: string[]): string[] {
+  const candidates = (servers && servers.length > 0 ? servers : dns.getServers())
+    .map((server) => server.split("%")[0])
+    .filter((server) => net.isIP(server) === 4);
+
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const server of candidates) {
+    if (seen.has(server)) continue;
+    seen.add(server);
+    unique.push(server);
+  }
+
+  return unique;
+}
 
 type FetchResponse = Awaited<ReturnType<typeof undiciFetch>>;
 
@@ -71,8 +93,16 @@ type UdpSession = {
   socket: dgram.Socket;
   srcIP: string;
   srcPort: number;
+
+  /** destination ip as seen by the guest */
   dstIP: string;
+  /** destination port as seen by the guest */
   dstPort: number;
+
+  /** upstream destination ip used by the host (dns mode dependent) */
+  upstreamIP: string;
+  /** upstream destination port used by the host */
+  upstreamPort: number;
 };
 
 type HttpRequestData = {
@@ -459,6 +489,25 @@ export type HttpAllowInfo = {
   protocol: "http" | "https";
 };
 
+export type DnsMode = "open" | "trusted" | "synthetic";
+
+export type DnsOptions = {
+  /** dns mode */
+  mode?: DnsMode;
+
+  /** trusted resolver ipv4 addresses (mode="trusted") */
+  trustedServers?: string[];
+
+  /** synthetic A response ipv4 address (mode="synthetic") */
+  syntheticIPv4?: string;
+
+  /** synthetic AAAA response ipv6 address (mode="synthetic") */
+  syntheticIPv6?: string;
+
+  /** synthetic response ttl in `seconds` (mode="synthetic") */
+  syntheticTtlSeconds?: number;
+};
+
 export class HttpRequestBlockedError extends Error {
   status: number;
   statusText: string;
@@ -496,6 +545,10 @@ export type QemuNetworkOptions = {
   vmMac?: Buffer;
   /** whether to enable debug logging */
   debug?: boolean;
+
+  /** dns configuration */
+  dns?: DnsOptions;
+
   /** http fetch implementation */
   fetch?: HttpFetch;
   /** http interception hooks */
@@ -515,6 +568,9 @@ export type QemuNetworkOptions = {
 
   /** tls MITM context cache ttl in `ms` (<=0 disables caching) */
   tlsContextCacheTtlMs?: number;
+
+  /** @internal udp socket factory (tests) */
+  udpSocketFactory?: () => dgram.Socket;
 };
 
 type CaCert = {
@@ -555,6 +611,18 @@ export class QemuNetworkBackend extends EventEmitter {
   private readonly tlsContextCacheMaxEntries: number;
   private readonly tlsContextCacheTtlMs: number;
 
+  private readonly dnsMode: DnsMode;
+  private readonly trustedDnsServers: string[];
+  private trustedDnsIndex = 0;
+  private readonly syntheticDnsOptions: {
+    /** synthetic A response ipv4 address */
+    ipv4: string;
+    /** synthetic AAAA response ipv6 address */
+    ipv6: string;
+    /** synthetic response ttl in `seconds` */
+    ttlSeconds: number;
+  };
+
   constructor(private readonly options: QemuNetworkOptions) {
     super();
     if (options.debug) {
@@ -572,6 +640,21 @@ export class QemuNetworkBackend extends EventEmitter {
     this.tlsContextCacheMaxEntries =
       options.tlsContextCacheMaxEntries ?? DEFAULT_TLS_CONTEXT_CACHE_MAX_ENTRIES;
     this.tlsContextCacheTtlMs = options.tlsContextCacheTtlMs ?? DEFAULT_TLS_CONTEXT_CACHE_TTL_MS;
+
+    this.dnsMode = options.dns?.mode ?? DEFAULT_DNS_MODE;
+    this.trustedDnsServers = normalizeIpv4Servers(options.dns?.trustedServers);
+
+    if (this.dnsMode === "trusted" && this.trustedDnsServers.length === 0) {
+      throw new Error(
+        "dns mode 'trusted' requires at least one IPv4 resolver (none found). Provide an IPv4 resolver via --dns-trusted-server or configure an IPv4 DNS server on the host"
+      );
+    }
+
+    this.syntheticDnsOptions = {
+      ipv4: options.dns?.syntheticIPv4 ?? DEFAULT_SYNTHETIC_DNS_IPV4,
+      ipv6: options.dns?.syntheticIPv6 ?? DEFAULT_SYNTHETIC_DNS_IPV6,
+      ttlSeconds: options.dns?.syntheticTtlSeconds ?? DEFAULT_SYNTHETIC_DNS_TTL_SECONDS,
+    };
   }
 
   start() {
@@ -639,11 +722,15 @@ export class QemuNetworkBackend extends EventEmitter {
   private resetStack() {
     this.cleanupSessions();
 
+    const gatewayIP = this.options.gatewayIP ?? "192.168.127.1";
+    const dnsServers = this.dnsMode === "open" ? undefined : [gatewayIP];
+
     this.stack = new NetworkStack({
-      gatewayIP: this.options.gatewayIP,
+      gatewayIP,
       vmIP: this.options.vmIP,
       gatewayMac: this.options.gatewayMac,
       vmMac: this.options.vmMac,
+      dnsServers,
       callbacks: {
         onUdpSend: (message) => this.handleUdpSend(message),
         onTcpConnect: (message) => this.handleTcpConnect(message),
@@ -876,6 +963,36 @@ export class QemuNetworkBackend extends EventEmitter {
     this.tcpSessions.clear();
   }
 
+  private pickTrustedDnsServer(): string {
+    const servers = this.trustedDnsServers;
+    if (servers.length === 0) {
+      throw new Error(
+        "dns mode 'trusted' requires at least one IPv4 resolver (none configured/found)"
+      );
+    }
+    const index = this.trustedDnsIndex++ % servers.length;
+    return servers[index]!;
+  }
+
+  private handleSyntheticDns(message: UdpSendMessage) {
+    // Only respond to packets that look like DNS.
+    if (!isProbablyDnsPacket(message.payload)) return;
+
+    const query = parseDnsQuery(message.payload);
+    if (!query) return;
+
+    const response = buildSyntheticDnsResponse(query, this.syntheticDnsOptions);
+
+    this.stack?.handleUdpResponse({
+      data: response,
+      srcIP: message.srcIP,
+      srcPort: message.srcPort,
+      dstIP: message.dstIP,
+      dstPort: message.dstPort,
+    });
+    this.flush();
+  }
+
   private handleUdpSend(message: UdpSendMessage) {
     if (message.dstPort !== 53) {
       if (this.options.debug) {
@@ -886,24 +1003,54 @@ export class QemuNetworkBackend extends EventEmitter {
       return;
     }
 
+    if (this.dnsMode === "synthetic") {
+      if (this.options.debug) {
+        this.emitDebug(
+          `dns synthetic ${message.srcIP}:${message.srcPort} -> ${message.dstIP}:${message.dstPort} (${message.payload.length} bytes)`
+        );
+      }
+      this.handleSyntheticDns(message);
+      return;
+    }
+
+    if (this.dnsMode === "trusted" && !parseDnsQuery(message.payload)) {
+      if (this.options.debug) {
+        this.emitDebug(
+          `dns blocked (non-dns payload) ${message.srcIP}:${message.srcPort} -> ${message.dstIP}:${message.dstPort} (${message.payload.length} bytes)`
+        );
+      }
+      return;
+    }
+
     let session = this.udpSessions.get(message.key);
     if (!session) {
-      const socket = dgram.createSocket("udp4");
+      const socket = this.options.udpSocketFactory
+        ? this.options.udpSocketFactory()
+        : dgram.createSocket("udp4");
+
+      const upstreamIP = this.dnsMode === "trusted" ? this.pickTrustedDnsServer() : message.dstIP;
+      const upstreamPort = 53;
+
       session = {
         socket,
         srcIP: message.srcIP,
         srcPort: message.srcPort,
         dstIP: message.dstIP,
         dstPort: message.dstPort,
+        upstreamIP,
+        upstreamPort,
       };
       this.udpSessions.set(message.key, session);
 
       socket.on("message", (data, rinfo) => {
         if (this.options.debug) {
+          const via = this.dnsMode === "trusted" ? ` via ${session!.upstreamIP}:${session!.upstreamPort}` : "";
           this.emitDebug(
-            `udp recv ${rinfo.address}:${rinfo.port} -> ${session!.srcIP}:${session!.srcPort} (${data.length} bytes)`
+            `dns recv ${rinfo.address}:${rinfo.port} -> ${session!.srcIP}:${session!.srcPort} (${data.length} bytes)${via}`
           );
         }
+
+        // Reply to the guest as if it came from the original destination IP.
         this.stack?.handleUdpResponse({
           data: Buffer.from(data),
           srcIP: session!.srcIP,
@@ -920,11 +1067,13 @@ export class QemuNetworkBackend extends EventEmitter {
     }
 
     if (this.options.debug) {
+      const via = this.dnsMode === "trusted" ? ` via ${session.upstreamIP}:${session.upstreamPort}` : "";
       this.emitDebug(
-        `udp send ${message.srcIP}:${message.srcPort} -> ${message.dstIP}:${message.dstPort} (${message.payload.length} bytes)`
+        `dns send ${message.srcIP}:${message.srcPort} -> ${message.dstIP}:${message.dstPort} (${message.payload.length} bytes)${via}`
       );
     }
-    session.socket.send(message.payload, message.dstPort, message.dstIP);
+
+    session.socket.send(message.payload, session.upstreamPort, session.upstreamIP);
   }
 
   private handleTcpConnect(message: TcpConnectMessage) {

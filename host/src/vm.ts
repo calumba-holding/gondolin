@@ -20,7 +20,7 @@ import {
   type SandboxConnection,
 } from "./sandbox-server";
 import type { SandboxState } from "./sandbox-controller";
-import type { HttpFetch, HttpHooks } from "./qemu-net";
+import type { DnsOptions, HttpFetch, HttpHooks } from "./qemu-net";
 import {
   MemoryProvider,
   SandboxVfsProvider,
@@ -94,6 +94,9 @@ export type VMOptions = {
   fetch?: HttpFetch;
   /** http interception hooks */
   httpHooks?: HttpHooks;
+
+  /** dns configuration */
+  dns?: DnsOptions;
   /** max intercepted http request body size in `bytes` */
   maxHttpBodyBytes?: number;
   /** max buffered upstream http response body size in `bytes` */
@@ -218,6 +221,9 @@ export class VM {
     if (options.httpHooks && sandboxOptions.httpHooks === undefined) {
       sandboxOptions.httpHooks = options.httpHooks;
     }
+    if (options.dns && sandboxOptions.dns === undefined) {
+      sandboxOptions.dns = options.dns;
+    }
     if (options.maxHttpBodyBytes !== undefined && sandboxOptions.maxHttpBodyBytes === undefined) {
       sandboxOptions.maxHttpBodyBytes = options.maxHttpBodyBytes;
     }
@@ -297,6 +303,9 @@ export class VM {
     }
     if (options.httpHooks && sandboxOptions.httpHooks === undefined) {
       sandboxOptions.httpHooks = options.httpHooks;
+    }
+    if (options.dns && sandboxOptions.dns === undefined) {
+      sandboxOptions.dns = options.dns;
     }
     if (options.maxHttpBodyBytes !== undefined && sandboxOptions.maxHttpBodyBytes === undefined) {
       sandboxOptions.maxHttpBodyBytes = options.maxHttpBodyBytes;

@@ -81,6 +81,8 @@ function bashUsage() {
   console.log("  --host-secret NAME@HOST[,HOST...][=VALUE]");
   console.log("                                  Add secret for specified hosts");
   console.log("                                  If =VALUE is omitted, reads from $NAME");
+  console.log("  --dns MODE                      DNS mode: synthetic|trusted|open (default: synthetic)");
+  console.log("  --dns-trusted-server IP         Trusted resolver IPv4 (repeatable; trusted mode)");
   console.log();
   console.log("Debugging:");
   console.log("  --ssh                           Enable SSH access via a localhost port forward");
@@ -115,6 +117,8 @@ function execUsage() {
   console.log("  --allow-host HOST               Allow HTTP requests to host");
   console.log("  --host-secret NAME@HOST[,HOST...][=VALUE]");
   console.log("                                  Add secret for specified hosts");
+  console.log("  --dns MODE                      DNS mode: synthetic|trusted|open (default: synthetic)");
+  console.log("  --dns-trusted-server IP         Trusted resolver IPv4 (repeatable; trusted mode)");
 }
 
 type MountSpec = {
@@ -134,6 +138,12 @@ type CommonOptions = {
   memoryMounts: string[];
   allowedHosts: string[];
   secrets: SecretSpec[];
+
+  /** dns mode (synthetic|trusted|open) */
+  dnsMode?: "synthetic" | "trusted" | "open";
+
+  /** trusted dns server ipv4 addresses */
+  dnsTrustedServers: string[];
 
   /** enable ssh (bash command only) */
   ssh?: boolean;
@@ -271,9 +281,27 @@ function buildVmOptions(common: CommonOptions) {
     env = result.env;
   }
 
+  if (common.dnsTrustedServers.length > 0) {
+    if (common.dnsMode === undefined) {
+      throw new Error("--dns-trusted-server requires --dns trusted");
+    }
+    if (common.dnsMode !== "trusted") {
+      throw new Error("--dns-trusted-server can only be used with --dns trusted");
+    }
+  }
+
+  const dns =
+    common.dnsMode || common.dnsTrustedServers.length > 0
+      ? {
+          mode: common.dnsMode,
+          trustedServers: common.dnsTrustedServers,
+        }
+      : undefined;
+
   return {
     vfs: Object.keys(mounts).length > 0 ? { mounts } : undefined,
     httpHooks,
+    dns,
     env,
   };
 }
@@ -286,6 +314,7 @@ function parseExecArgs(argv: string[]): ExecArgs {
       memoryMounts: [],
       allowedHosts: [],
       secrets: [],
+      dnsTrustedServers: [],
     },
   };
   let current: Command | null = null;
@@ -329,6 +358,21 @@ function parseExecArgs(argv: string[]): ExecArgs {
         const spec = optionArgs[++i];
         if (!spec) fail("--host-secret requires an argument");
         args.common.secrets.push(parseHostSecret(spec));
+        return i;
+      }
+      case "--dns": {
+        const mode = optionArgs[++i] as any;
+        if (mode !== "synthetic" && mode !== "trusted" && mode !== "open") {
+          fail("--dns must be one of: synthetic, trusted, open");
+        }
+        args.common.dnsMode = mode;
+        return i;
+      }
+      case "--dns-trusted-server": {
+        const ip = optionArgs[++i];
+        if (!ip) fail("--dns-trusted-server requires an argument");
+        if (net.isIP(ip) !== 4) fail("--dns-trusted-server must be a valid IPv4 address");
+        args.common.dnsTrustedServers.push(ip);
         return i;
       }
     }
@@ -596,6 +640,7 @@ function parseBashArgs(argv: string[]): BashArgs {
     memoryMounts: [],
     allowedHosts: [],
     secrets: [],
+    dnsTrustedServers: [],
     ssh: false,
   };
 
@@ -636,6 +681,28 @@ function parseBashArgs(argv: string[]): BashArgs {
           process.exit(1);
         }
         args.secrets.push(parseHostSecret(spec));
+        break;
+      }
+      case "--dns": {
+        const mode = argv[++i] as any;
+        if (mode !== "synthetic" && mode !== "trusted" && mode !== "open") {
+          console.error("--dns must be one of: synthetic, trusted, open");
+          process.exit(1);
+        }
+        args.dnsMode = mode;
+        break;
+      }
+      case "--dns-trusted-server": {
+        const ip = argv[++i];
+        if (!ip) {
+          console.error("--dns-trusted-server requires an argument");
+          process.exit(1);
+        }
+        if (net.isIP(ip) !== 4) {
+          console.error("--dns-trusted-server must be a valid IPv4 address");
+          process.exit(1);
+        }
+        args.dnsTrustedServers.push(ip);
         break;
       }
       case "--ssh":

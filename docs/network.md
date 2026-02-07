@@ -74,8 +74,11 @@ correctness. The enforcement happens *before* any real host sockets are created.
 
 DNS exists because it is useful for HTTP clients, but it is intentionally constrained:
 
-- Only UDP destination port **53** is forwarded.
-- DNS requests are relayed by the host to the host's configured resolvers.
+- Only UDP destination port **53** is handled.
+- DNS behavior is configurable via a **DNS mode**:
+  - `synthetic` (default): no upstream DNS; the host replies with synthetic answers
+  - `trusted`: the guest may send DNS to any IP, but the host forwards queries only to the host's trusted resolvers
+  - `open`: DNS is forwarded to the destination IP the guest targeted (UDP/53), which allows DNS-like UDP tunneling
 - There is no goal of being a full-featured recursive resolver (for example,
   caching is not required for correctness).
 
