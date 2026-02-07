@@ -193,6 +193,7 @@ export class VM {
   private readonly fuseBinds: string[];
   private bootSent = false;
   private vfsReadyPromise: Promise<void> | null = null;
+  private qemuChecked = false;
   private debugLog: DebugLogFn | null = null;
   private debugListener: ((component: DebugComponent, message: string) => void) | null = null;
   private sshAccess: SshAccess | null = null;
@@ -785,7 +786,21 @@ fi
     }
   }
 
+  private ensureQemuAvailable() {
+    if (this.qemuChecked) return;
+
+    const server = this.server;
+    if (!server) {
+      throw new Error("sandbox server is not available");
+    }
+
+    execFileSync(server.getQemuPath(), ["--version"], { stdio: "ignore" });
+    this.qemuChecked = true;
+  }
+
   private async startInternal() {
+    this.ensureQemuAvailable();
+
     if (this.server) {
       await this.server.start();
     }

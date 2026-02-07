@@ -37,6 +37,25 @@ type ExecArgs = {
   common: CommonOptions;
 };
 
+function renderCliError(err: unknown) {
+  const code = (err as any)?.code;
+  const binary = (err as any)?.path;
+
+  if (code === "ENOENT" && typeof binary === "string" && binary.includes("qemu")) {
+    console.error(`Error: QEMU binary '${binary}' not found.`);
+    console.error("Please install QEMU to run the sandbox.");
+    if (process.platform === "darwin") {
+      console.error("  brew install qemu");
+    } else {
+      console.error("  sudo apt install qemu-system (or equivalent for your distro)");
+    }
+    return;
+  }
+
+  const message = err instanceof Error ? err.message : String(err);
+  console.error(message);
+}
+
 function usage() {
   console.log("Usage: gondolin <command> [options]");
   console.log("Commands:");
@@ -433,15 +452,15 @@ function buildCommandPayload(command: Command) {
 
 async function runExecVm(args: ExecArgs) {
   const vmOptions = buildVmOptions(args.common);
-
-  // Use VM.create() to ensure guest assets are available
-  const vm = await VM.create({
-    ...vmOptions,
-  });
-
+  let vm: VM | null = null;
   let exitCode = 0;
 
   try {
+    // Use VM.create() to ensure guest assets are available
+    vm = await VM.create({
+      ...vmOptions,
+    });
+
     for (const command of args.commands) {
       const result = await vm.exec([command.cmd, ...command.argv], {
         env: command.env.length > 0 ? command.env : undefined,
@@ -459,15 +478,20 @@ async function runExecVm(args: ExecArgs) {
         exitCode = result.exitCode;
       }
     }
-
-    await vm.close();
-    process.exit(exitCode);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    await vm.close();
-    process.exit(1);
+    renderCliError(err);
+    exitCode = 1;
+  } finally {
+    if (vm) {
+      try {
+        await vm.close();
+      } catch {
+        // ignore close errors
+      }
+    }
   }
+
+  process.exit(exitCode);
 }
 
 function runExecSocket(args: ExecArgs) {
@@ -666,13 +690,15 @@ function parseBashArgs(argv: string[]): BashArgs {
 async function runBash(argv: string[]) {
   const args = parseBashArgs(argv);
   const vmOptions = buildVmOptions(args);
-
-  // Use VM.create() to ensure guest assets are available
-  const vm = await VM.create({
-    ...vmOptions,
-  });
+  let vm: VM | null = null;
+  let exitCode = 1;
 
   try {
+    // Use VM.create() to ensure guest assets are available
+    vm = await VM.create({
+      ...vmOptions,
+    });
+
     if (args.ssh) {
       const access = await vm.enableSsh({
         user: args.sshUser,
@@ -689,14 +715,21 @@ async function runBash(argv: string[]) {
       process.stderr.write(`process exited due to signal ${result.signal}\n`);
     }
 
-    await vm.close();
-    process.exit(result.exitCode);
+    exitCode = result.exitCode;
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    await vm.close();
-    process.exit(1);
+    renderCliError(err);
+    exitCode = 1;
+  } finally {
+    if (vm) {
+      try {
+        await vm.close();
+      } catch {
+        // ignore close errors
+      }
+    }
   }
+
+  process.exit(exitCode);
 }
 
 // ============================================================================
@@ -929,6 +962,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err.message);
+  renderCliError(err);
   process.exit(1);
 });
