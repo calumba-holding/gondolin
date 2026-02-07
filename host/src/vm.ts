@@ -491,8 +491,12 @@ export class VM {
 
     const pubKey = fs.readFileSync(keyPath + ".pub", "utf8").trim();
 
+    const shQuote = (value: string) => "'" + value.replace(/'/g, "'\\''") + "'";
+    const sshUser = shQuote(user);
+
     // Install authorized_keys + start sandboxssh + start sshd
     const setupScript = `set -eu
+SSH_USER=${sshUser}
 if ! command -v sshd >/dev/null 2>&1; then
   echo "sshd not found in guest image" 1>&2
   exit 127
@@ -501,6 +505,29 @@ fi
 if ! command -v sandboxssh >/dev/null 2>&1; then
   echo "sandboxssh not found in guest image" 1>&2
   exit 126
+fi
+
+if ! id "$SSH_USER" >/dev/null 2>&1; then
+  echo "ssh user '$SSH_USER' does not exist in guest image" 1>&2
+  exit 125
+fi
+
+SSH_UID=$(id -u "$SSH_USER")
+SSH_GID=$(id -g "$SSH_USER")
+
+SSH_HOME=""
+if command -v getent >/dev/null 2>&1; then
+  SSH_HOME=$(getent passwd "$SSH_USER" | cut -d: -f6 || true)
+fi
+if [ -z "$SSH_HOME" ] && [ -r /etc/passwd ]; then
+  SSH_HOME=$(awk -F: -v u="$SSH_USER" '$1==u{print $6;exit}' /etc/passwd || true)
+fi
+if [ -z "$SSH_HOME" ]; then
+  if [ "$SSH_UID" = "0" ]; then
+    SSH_HOME=/root
+  else
+    SSH_HOME="/home/$SSH_USER"
+  fi
 fi
 
 # Ensure loopback is up (needed for ListenAddress=127.0.0.1 and tcp forwarding)
@@ -515,17 +542,21 @@ mkdir -p /var/empty
 chown root:root /var/empty || true
 chmod 755 /var/empty || true
 
-chown root:root /root || true
-chmod 700 /root || true
+mkdir -p "$SSH_HOME" "$SSH_HOME/.ssh" /run/sshd /etc/ssh
 
-mkdir -p /root/.ssh /run/sshd /etc/ssh
-chown root:root /root/.ssh || true
-chmod 700 /root/.ssh
+chown "$SSH_UID:$SSH_GID" "$SSH_HOME" "$SSH_HOME/.ssh" || true
+if [ "$SSH_UID" = "0" ]; then
+  chmod 700 "$SSH_HOME" || true
+else
+  chmod 755 "$SSH_HOME" || true
+fi
+chmod 700 "$SSH_HOME/.ssh" || true
 
-cat > /root/.ssh/authorized_keys <<'EOF'
+cat > "$SSH_HOME/.ssh/authorized_keys" <<'EOF'
 ${pubKey}
 EOF
-chmod 600 /root/.ssh/authorized_keys
+chown "$SSH_UID:$SSH_GID" "$SSH_HOME/.ssh/authorized_keys" || true
+chmod 600 "$SSH_HOME/.ssh/authorized_keys"
 
 # Generate host keys if missing
 ssh-keygen -A >/dev/null 2>&1 || true
@@ -546,13 +577,23 @@ fi
   -o KbdInteractiveAuthentication=no \
   -o ChallengeResponseAuthentication=no \
   -o PubkeyAuthentication=yes \
+  -o AllowUsers=$SSH_USER \
+  -o AllowAgentForwarding=no \
+  -o AllowTcpForwarding=no \
+  -o X11Forwarding=no \
+  -o PermitTunnel=no \
   -o PermitRootLogin=prohibit-password \
   -o PidFile=/run/sshd.pid \
   >/tmp/sshd.log 2>&1 &
 `;
 
     const setupResult = await this.exec(["sh", "-lc", setupScript]);
-    if (setupResult.exitCode !== 0 && setupResult.exitCode !== 127 && setupResult.exitCode !== 126) {
+    if (
+      setupResult.exitCode !== 0 &&
+      setupResult.exitCode !== 127 &&
+      setupResult.exitCode !== 126 &&
+      setupResult.exitCode !== 125
+    ) {
       throw new Error(
         `failed to configure ssh in guest (exit ${setupResult.exitCode}): ${setupResult.stderr.trim()}`
       );
@@ -565,6 +606,11 @@ fi
     if (setupResult.exitCode === 126) {
       throw new Error(
         "sandboxssh not available in guest image. Rebuild guest assets to include sandboxssh."
+      );
+    }
+    if (setupResult.exitCode === 125) {
+      throw new Error(
+        `ssh user '${user}' does not exist in guest image (vm.enableSsh({ user }))`
       );
     }
 
@@ -642,6 +688,7 @@ fi
       identityFile: keyPath,
       command:
         `ssh -p ${port} -i ${keyPath} ` +
+        `-o ForwardAgent=no -o ClearAllForwardings=yes -o IdentitiesOnly=yes ` +
         `-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ${user}@${host}`,
       close: async () => {
         await new Promise<void>((resolve) => forwardServer.close(() => resolve()));
