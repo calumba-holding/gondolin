@@ -185,7 +185,7 @@ Point `imagePath` at the asset directory (it will use `manifest.json` when prese
 import { VM } from "@earendil-works/gondolin";
 
 const vm = await VM.create({
-  server: {
+  sandbox: {
     imagePath: "./my-assets",
   },
 });

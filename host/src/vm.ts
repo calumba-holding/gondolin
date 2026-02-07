@@ -81,8 +81,8 @@ export type VmVfsOptions = {
 };
 
 export type VMOptions = {
-  /** sandbox server options */
-  server?: SandboxServerOptions;
+  /** sandbox controller options */
+  sandbox?: SandboxServerOptions;
   /** whether to boot the vm immediately (default: true) */
   autoStart?: boolean;
   /** http fetch implementation for asset downloads */
@@ -105,7 +105,7 @@ export type VMOptions = {
   /**
    * Debug log callback.
    *
-   * If any debug mode is enabled (via `server.debug` or `GONDOLIN_DEBUG`),
+   * If any debug mode is enabled (via `sandbox.debug` or `GONDOLIN_DEBUG`),
    * debug messages are delivered here.
    *
    * - `undefined`: defaults to `console.log` with `[component]` prefix
@@ -177,37 +177,37 @@ export class VM {
    * @returns A configured VM instance
    */
   static async create(options: VMOptions = {}): Promise<VM> {
-    // Resolve server options with async asset fetching
-    const serverOptions: SandboxServerOptions = { ...options.server };
+    // Resolve sandbox options with async asset fetching
+    const sandboxOptions: SandboxServerOptions = { ...options.sandbox };
 
-    // Build the combined server options
-    if (options.fetch && serverOptions.fetch === undefined) {
-      serverOptions.fetch = options.fetch;
+    // Build the combined sandbox options
+    if (options.fetch && sandboxOptions.fetch === undefined) {
+      sandboxOptions.fetch = options.fetch;
     }
-    if (options.httpHooks && serverOptions.httpHooks === undefined) {
-      serverOptions.httpHooks = options.httpHooks;
+    if (options.httpHooks && sandboxOptions.httpHooks === undefined) {
+      sandboxOptions.httpHooks = options.httpHooks;
     }
-    if (options.maxHttpBodyBytes !== undefined && serverOptions.maxHttpBodyBytes === undefined) {
-      serverOptions.maxHttpBodyBytes = options.maxHttpBodyBytes;
+    if (options.maxHttpBodyBytes !== undefined && sandboxOptions.maxHttpBodyBytes === undefined) {
+      sandboxOptions.maxHttpBodyBytes = options.maxHttpBodyBytes;
     }
     if (
       options.maxHttpResponseBodyBytes !== undefined &&
-      (serverOptions as any).maxHttpResponseBodyBytes === undefined
+      (sandboxOptions as any).maxHttpResponseBodyBytes === undefined
     ) {
-      (serverOptions as any).maxHttpResponseBodyBytes = options.maxHttpResponseBodyBytes;
+      (sandboxOptions as any).maxHttpResponseBodyBytes = options.maxHttpResponseBodyBytes;
     }
-    if (options.memory && serverOptions.memory === undefined) {
-      serverOptions.memory = options.memory;
+    if (options.memory && sandboxOptions.memory === undefined) {
+      sandboxOptions.memory = options.memory;
     }
-    if (options.cpus && serverOptions.cpus === undefined) {
-      serverOptions.cpus = options.cpus;
+    if (options.cpus && sandboxOptions.cpus === undefined) {
+      sandboxOptions.cpus = options.cpus;
     }
 
     // Resolve options with asset fetching
-    const resolvedServerOptions = await resolveSandboxServerOptionsAsync(serverOptions);
+    const resolvedSandboxOptions = await resolveSandboxServerOptionsAsync(sandboxOptions);
 
     // Create VM with pre-resolved options
-    return new VM(options, resolvedServerOptions);
+    return new VM(options, resolvedSandboxOptions);
   }
 
   /**
@@ -218,14 +218,14 @@ export class VM {
    * downloading, use the async `VM.create()` factory instead.
    *
    * @param options VM configuration options
-   * @param resolvedServerOptions Optional pre-resolved server options (from VM.create())
+   * @param resolvedSandboxOptions Optional pre-resolved sandbox options (from VM.create())
    */
-  constructor(options: VMOptions = {}, resolvedServerOptions?: ResolvedSandboxServerOptions) {
+  constructor(options: VMOptions = {}, resolvedSandboxOptions?: ResolvedSandboxServerOptions) {
     this.autoStart = options.autoStart ?? true;
     const mitmMounts = resolveMitmMounts(
       options.vfs,
-      options.server?.mitmCertDir,
-      options.server?.netEnabled ?? true
+      options.sandbox?.mitmCertDir,
+      options.sandbox?.netEnabled ?? true
     );
     const resolvedVfs = resolveVmVfs(options.vfs, mitmMounts);
     this.vfs = resolvedVfs.provider;
@@ -235,71 +235,71 @@ export class VM {
     this.fuseMount = fuseConfig.fuseMount;
     this.fuseBinds = fuseConfig.fuseBinds;
 
-    const serverOptions: SandboxServerOptions = { ...options.server };
-    if (serverOptions.vfsProvider && options.vfs) {
-      throw new Error("VM cannot specify both vfs and server.vfsProvider");
+    const sandboxOptions: SandboxServerOptions = { ...options.sandbox };
+    if (sandboxOptions.vfsProvider && options.vfs) {
+      throw new Error("VM cannot specify both vfs and sandbox.vfsProvider");
     }
-    if (serverOptions.vfsProvider) {
+    if (sandboxOptions.vfsProvider) {
       const injectedMounts = resolveMitmMounts(
         undefined,
-        serverOptions.mitmCertDir,
-        serverOptions.netEnabled ?? true
+        sandboxOptions.mitmCertDir,
+        sandboxOptions.netEnabled ?? true
       );
       if (Object.keys(injectedMounts).length > 0) {
         const normalized = normalizeMountMap({
-          "/": serverOptions.vfsProvider,
+          "/": sandboxOptions.vfsProvider,
           ...injectedMounts,
         });
         this.vfs = wrapProvider(new MountRouterProvider(normalized), {});
-        fuseMounts = { "/": serverOptions.vfsProvider, ...injectedMounts };
+        fuseMounts = { "/": sandboxOptions.vfsProvider, ...injectedMounts };
       } else {
-        this.vfs = wrapProvider(serverOptions.vfsProvider, {});
-        fuseMounts = { "/": serverOptions.vfsProvider };
+        this.vfs = wrapProvider(sandboxOptions.vfsProvider, {});
+        fuseMounts = { "/": sandboxOptions.vfsProvider };
       }
       fuseConfig = resolveFuseConfig(options.vfs, fuseMounts);
       this.fuseMount = fuseConfig.fuseMount;
       this.fuseBinds = fuseConfig.fuseBinds;
-      serverOptions.vfsProvider = this.vfs;
+      sandboxOptions.vfsProvider = this.vfs;
     }
-    if (options.fetch && serverOptions.fetch === undefined) {
-      serverOptions.fetch = options.fetch;
+    if (options.fetch && sandboxOptions.fetch === undefined) {
+      sandboxOptions.fetch = options.fetch;
     }
-    if (options.httpHooks && serverOptions.httpHooks === undefined) {
-      serverOptions.httpHooks = options.httpHooks;
+    if (options.httpHooks && sandboxOptions.httpHooks === undefined) {
+      sandboxOptions.httpHooks = options.httpHooks;
     }
-    if (options.maxHttpBodyBytes !== undefined && serverOptions.maxHttpBodyBytes === undefined) {
-      serverOptions.maxHttpBodyBytes = options.maxHttpBodyBytes;
+    if (options.maxHttpBodyBytes !== undefined && sandboxOptions.maxHttpBodyBytes === undefined) {
+      sandboxOptions.maxHttpBodyBytes = options.maxHttpBodyBytes;
     }
     if (
       options.maxHttpResponseBodyBytes !== undefined &&
-      (serverOptions as any).maxHttpResponseBodyBytes === undefined
+      (sandboxOptions as any).maxHttpResponseBodyBytes === undefined
     ) {
-      (serverOptions as any).maxHttpResponseBodyBytes = options.maxHttpResponseBodyBytes;
+      (sandboxOptions as any).maxHttpResponseBodyBytes = options.maxHttpResponseBodyBytes;
     }
-    if (this.vfs && serverOptions.vfsProvider === undefined) {
-      serverOptions.vfsProvider = this.vfs;
+    if (this.vfs && sandboxOptions.vfsProvider === undefined) {
+      sandboxOptions.vfsProvider = this.vfs;
     }
-    if (options.memory && serverOptions.memory === undefined) {
-      serverOptions.memory = options.memory;
+    if (options.memory && sandboxOptions.memory === undefined) {
+      sandboxOptions.memory = options.memory;
     }
-    if (options.cpus && serverOptions.cpus === undefined) {
-      serverOptions.cpus = options.cpus;
+    if (options.cpus && sandboxOptions.cpus === undefined) {
+      sandboxOptions.cpus = options.cpus;
     }
 
     // Handle VFS in resolved options
-    if (resolvedServerOptions) {
+    if (resolvedSandboxOptions) {
       // Merge VFS provider into resolved options
       if (this.vfs) {
-        (resolvedServerOptions as any).vfsProvider = this.vfs;
+        (resolvedSandboxOptions as any).vfsProvider = this.vfs;
       }
-      this.server = new SandboxServer(resolvedServerOptions);
+      this.server = new SandboxServer(resolvedSandboxOptions);
     } else {
-      this.server = new SandboxServer(serverOptions);
+      this.server = new SandboxServer(sandboxOptions);
     }
 
-    const effectiveDebugFlags = resolvedServerOptions
-      ? new Set(resolvedServerOptions.debug ?? [])
-      : resolveDebugFlags(serverOptions.debug);
+    const effectiveDebugFlags = resolvedSandboxOptions
+      ? new Set(resolvedSandboxOptions.debug ?? [])
+      : resolveDebugFlags(sandboxOptions.debug);
 
     const anyDebug = effectiveDebugFlags.size > 0;
 

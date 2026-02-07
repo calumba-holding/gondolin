@@ -30,13 +30,13 @@ export GONDOLIN_DEBUG=all
 
 ### Programmatic (per-VM)
 
-Debug flags are also available on `server.debug`:
+Debug flags are also available on `sandbox.debug`:
 
 ```ts
 import { VM } from "@earendil-works/gondolin";
 
 const vm = await VM.create({
-  server: {
+  sandbox: {
     // Enable only selected components
     debug: ["net", "exec"],
 
@@ -61,7 +61,7 @@ import { VM, type DebugComponent } from "@earendil-works/gondolin";
 const logs: Array<{ component: DebugComponent; message: string }> = [];
 
 const vm = await VM.create({
-  server: { debug: ["net", "vfs"] },
+  sandbox: { debug: ["net", "vfs"] },
   debugLog(component, message) {
     logs.push({ component, message });
   },
