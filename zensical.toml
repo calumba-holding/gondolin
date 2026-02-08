@@ -36,13 +36,13 @@ nav = [
         {"Workloads" = "workloads.md"},
         {"CLI" = "cli.md"},
         {"TypeScript SDK" = "sdk.md"},
-        {"VFS Providers" = "vfs.md"},
-        {"Snapshots" = "snapshots.md"},
         {"SSH" = "ssh.md"},
         {"Debug Logging" = "debug.md"},
     ]},
 
     {"Images & Filesystem" = [
+        {"VFS Providers" = "vfs.md"},
+        {"Snapshots" = "snapshots.md"},
         {"Custom Images" = "custom-images.md"},
     ]},
 
