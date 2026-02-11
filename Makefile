@@ -39,9 +39,8 @@ check:
 		"host:typecheck" "$(MAKE) -C host typecheck"
 
 test:
-	@$(RUN_PARALLEL) -j 1 \
-		"guest:test" "$(MAKE) -C guest test" \
-		"host:test" "$(MAKE) -C host test"
+	@$(MAKE) -C guest test
+	@$(MAKE) -C host test
 
 format:
 	@$(RUN_PARALLEL) -j 2 \

@@ -1,4 +1,4 @@
-.PHONY: build build-bins build-inner test clean run assets lint typecheck format
+.PHONY: build build-bins build-inner test test-inner clean run assets lint typecheck format
 
 RUN_PARALLEL ?= ../scripts/run-parallel
 
@@ -12,11 +12,9 @@ GONDOLIN_BUILD_EXTRA_ARGS ?=
 ZIG_SOURCES := $(shell find src -name '*.zig') build.zig
 ZIG_BUILD_DEPS := $(ZIG_SOURCES) build.zig.zon
 # NOTE: guest image builds are driven by the host TypeScript builder (host/src/build-alpine.ts).
-# build.sh remains as a legacy/manual script but is not part of the default pipeline.
-IMAGE_BUILD_DEPS := image/init image/initramfs-init
 HOST_BUILD_DEPS := $(shell find ../host/src ../host/bin -name '*.ts') ../host/package.json ../host/tsconfig.json
 GONDOLIN_CONFIG_DEP := $(if $(strip $(GONDOLIN_BUILD_CONFIG)),$(GONDOLIN_BUILD_CONFIG))
-BUILD_DEPS := $(ZIG_BUILD_DEPS) $(IMAGE_BUILD_DEPS) $(HOST_BUILD_DEPS) $(GONDOLIN_CONFIG_DEP)
+BUILD_DEPS := $(ZIG_BUILD_DEPS) $(HOST_BUILD_DEPS) $(GONDOLIN_CONFIG_DEP)
 
 IMAGE_OUT ?= ./image/out
 IMAGE_INITRAMFS ?= $(IMAGE_OUT)/initramfs.cpio.lz4
@@ -77,7 +75,11 @@ lint:
 typecheck: build-bins
 
 
-test: assets
+test:
+	@$(RUN_PARALLEL) -j 1 \
+		"guest:test" "$(MAKE) test-inner"
+
+test-inner: assets
 	$(ZIG) build test-bins -Doptimize=$(OPTIMIZE)
 	$(TSX) ../host/bin/guest-tests.ts
 
