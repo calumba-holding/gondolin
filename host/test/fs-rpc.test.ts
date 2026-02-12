@@ -17,6 +17,9 @@ const LINUX_OPEN_FLAGS = {
   O_APPEND: 0x400,
 } as const;
 
+const DT_DIR = 4;
+const DT_REG = 8;
+
 function createService() {
   return new FsRpcService(new MemoryProvider());
 }
@@ -145,6 +148,37 @@ test("fs rpc readdir offsets", async () => {
   const secondEntries = (second.p.res?.entries as Array<{ name: string }>) ?? [];
   assert.equal(secondEntries.length, 1);
   assert.notEqual(secondEntries[0].name, firstEntries[0].name);
+
+  await service.close();
+});
+
+test("fs rpc readdir reports Linux dirent types", async () => {
+  const service = createService();
+
+  await send(service, "mkdir", {
+    parent_ino: 1,
+    name: "pkg",
+    mode: 0o755,
+  });
+  await send(service, "create", {
+    parent_ino: 1,
+    name: "module.py",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const readdir = await send(service, "readdir", {
+    ino: 1,
+    offset: 0,
+    max_entries: 128,
+  });
+  assert.equal(readdir.p.err, 0);
+
+  const entries = (readdir.p.res?.entries as Array<{ name: string; type: number }>) ?? [];
+  const byName = new Map(entries.map((entry) => [entry.name, entry.type]));
+
+  assert.equal(byName.get("pkg"), DT_DIR);
+  assert.equal(byName.get("module.py"), DT_REG);
 
   await service.close();
 });

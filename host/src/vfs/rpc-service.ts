@@ -13,8 +13,8 @@ const DEFAULT_ENTRY_TTL_MS = 1000;
 const DEFAULT_ATTR_TTL_MS = 1000;
 const DEFAULT_NEGATIVE_TTL_MS = 250;
 
-const DT_REG = 1;
-const DT_DIR = 2;
+const DT_REG = 8;
+const DT_DIR = 4;
 const DT_LNK = 10;
 
 export const MAX_RPC_DATA = 60 * 1024;
