@@ -59,9 +59,20 @@ ICON_SUCCESS = f"{GREEN}✓{RESET}"
 ICON_FAILURE = f"{RED}✗{RESET}"
 ICON_RUNNING = f"{YELLOW}●{RESET}"
 
-# Regex to strip ANSI codes and OSC sequences (including terminal query responses)
-# Handles: CSI sequences (including private modes with ?), OSC sequences, charset sequences
-ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[a-zA-Z]|\x1b\].*?\x07|\x1b[()][AB012]")
+# Regex to strip ANSI codes and OSC sequences
+#
+# We see a lot of these in CI logs because commands are run under a PTY (so they
+# enable interactive progress UI). GitHub Actions logs are not a real terminal,
+# so escape sequences show up as garbage.
+#
+# Handles:
+# - CSI: ESC [ ... @-~  (including private modes with '?')
+# - OSC: ESC ] ... BEL or ST (ESC \\)
+# - 2-byte ESC control sequences like ESC M / ESC 7 / ESC 8
+# - charset sequences like ESC (0
+ANSI_PATTERN = re.compile(
+    r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\].*?(?:\x07|\x1b\\\\)|\x1b[@-Z\\\\-_]|\x1b[()][AB012]"
+)
 # Pattern to filter out OSC terminal query responses from output (e.g., OSC 10/11 color responses)
 OSC_RESPONSE_PATTERN = re.compile(r"\x1b\]1[0-9];[^\x07]*\x07")
 
@@ -287,6 +298,8 @@ class ParallelRunner:
                                 text = data.decode("utf-8", errors="replace")
                                 # Filter out terminal query responses
                                 text = OSC_RESPONSE_PATTERN.sub("", text)
+                                if self.no_capture:
+                                    text = strip_ansi(text).replace("\r", "\n")
                                 task.output.append(text)
                                 buffer += text
                                 if self.no_capture:
@@ -304,6 +317,8 @@ class ParallelRunner:
                             text = data.decode("utf-8", errors="replace")
                             # Filter out terminal query responses (e.g., OSC 10/11 color queries)
                             text = OSC_RESPONSE_PATTERN.sub("", text)
+                            if self.no_capture:
+                                text = strip_ansi(text).replace("\r", "\n")
                             task.output.append(text)
                             buffer += text
                             if self.no_capture:
