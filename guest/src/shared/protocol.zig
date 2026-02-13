@@ -22,6 +22,9 @@
 const std = @import("std");
 const cbor = @import("cbor.zig");
 
+/// maximum frame size in `bytes`
+pub const max_frame_len: u32 = 4 * 1024 * 1024;
+
 pub const ProtocolError = error{
     InvalidType,
     MissingField,
@@ -189,8 +192,7 @@ pub const FrameReader = struct {
                     (@as(u32, self.len_buf[2]) << 8) |
                     @as(u32, self.len_buf[3]);
 
-                const max_frame: u32 = 4 * 1024 * 1024;
-                if (len > max_frame) return error.FrameTooLarge;
+                if (len > max_frame_len) return error.FrameTooLarge;
 
                 const frame = try self.allocator.alloc(u8, len);
                 self.frame = frame;
@@ -257,6 +259,8 @@ pub const FrameWriter = struct {
     }
 
     pub fn enqueue(self: *FrameWriter, payload: []const u8) !void {
+        if (payload.len > @as(usize, max_frame_len)) return error.FrameTooLarge;
+
         const len: u32 = @intCast(payload.len);
         var len_buf: [4]u8 = .{
             @intCast((len >> 24) & 0xff),
@@ -289,57 +293,81 @@ pub const FrameWriter = struct {
 pub fn decodeExecRequest(allocator: std.mem.Allocator, frame: []const u8) !ExecRequest {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseExecRequest(allocator, root);
+    errdefer cbor.freeValue(allocator, root);
+
+    const req = try parseExecRequest(allocator, root);
+    cbor.freeValue(allocator, root);
+    return req;
 }
 
 pub fn decodeFileReadRequest(allocator: std.mem.Allocator, frame: []const u8) !FileReadRequest {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseFileReadRequest(root);
+    errdefer cbor.freeValue(allocator, root);
+
+    const req = try parseFileReadRequest(root);
+    cbor.freeValue(allocator, root);
+    return req;
 }
 
 pub fn decodeFileWriteRequest(allocator: std.mem.Allocator, frame: []const u8) !FileWriteRequest {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseFileWriteRequest(root);
+    errdefer cbor.freeValue(allocator, root);
+
+    const req = try parseFileWriteRequest(root);
+    cbor.freeValue(allocator, root);
+    return req;
 }
 
 pub fn decodeFileWriteData(allocator: std.mem.Allocator, frame: []const u8, expected_id: u32) !FileWriteData {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseFileWriteData(root, expected_id);
+    errdefer cbor.freeValue(allocator, root);
+
+    const msg = try parseFileWriteData(root, expected_id);
+    cbor.freeValue(allocator, root);
+    return msg;
 }
 
 pub fn decodeFileDeleteRequest(allocator: std.mem.Allocator, frame: []const u8) !FileDeleteRequest {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseFileDeleteRequest(root);
+    errdefer cbor.freeValue(allocator, root);
+
+    const req = try parseFileDeleteRequest(root);
+    cbor.freeValue(allocator, root);
+    return req;
 }
 
 pub fn decodeStdinData(allocator: std.mem.Allocator, frame: []const u8, expected_id: u32) !StdinData {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseStdinData(root, expected_id);
+    errdefer cbor.freeValue(allocator, root);
+
+    const msg = try parseStdinData(root, expected_id);
+    cbor.freeValue(allocator, root);
+    return msg;
 }
 
 pub fn decodeInputMessage(allocator: std.mem.Allocator, frame: []const u8, expected_id: u32) !InputMessage {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseInputMessage(root, expected_id);
+    errdefer cbor.freeValue(allocator, root);
+
+    const msg = try parseInputMessage(root, expected_id);
+    cbor.freeValue(allocator, root);
+    return msg;
 }
 
 pub fn decodeRoutedInputMessage(allocator: std.mem.Allocator, frame: []const u8) !RoutedInputMessage {
     var dec = cbor.Decoder.init(allocator, frame);
     const root = try dec.decodeValue();
-    defer cbor.freeValue(allocator, root);
-    return parseRoutedInputMessage(root);
+    errdefer cbor.freeValue(allocator, root);
+
+    const msg = try parseRoutedInputMessage(root);
+    cbor.freeValue(allocator, root);
+    return msg;
 }
 
 pub fn decodeTcpMessage(allocator: std.mem.Allocator, frame: []const u8) !TcpMessage {
@@ -659,8 +687,7 @@ pub fn readFrame(allocator: std.mem.Allocator, fd: std.posix.fd_t) ![]u8 {
         (@as(u32, len_buf[2]) << 8) |
         @as(u32, len_buf[3]);
 
-    const max_frame: u32 = 4 * 1024 * 1024;
-    if (len > max_frame) return error.FrameTooLarge;
+    if (len > max_frame_len) return error.FrameTooLarge;
 
     const frame = try allocator.alloc(u8, len);
     errdefer allocator.free(frame);
@@ -669,6 +696,8 @@ pub fn readFrame(allocator: std.mem.Allocator, fd: std.posix.fd_t) ![]u8 {
 }
 
 pub fn writeFrame(fd: std.posix.fd_t, payload: []const u8) !void {
+    if (payload.len > @as(usize, max_frame_len)) return error.FrameTooLarge;
+
     const len: u32 = @intCast(payload.len);
     var len_buf: [4]u8 = .{
         @intCast((len >> 24) & 0xff),

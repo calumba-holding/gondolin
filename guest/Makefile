@@ -1,4 +1,4 @@
-.PHONY: build build-bins build-inner test test-inner clean run assets lint typecheck format
+.PHONY: build build-bins build-inner test test-inner clean run assets lint typecheck format fuzz fuzz-cbor fuzz-protocol fuzz-sandbox fuzz-cbor-last fuzz-protocol-last fuzz-sandbox-last fuzz-cbor-repro fuzz-protocol-repro fuzz-sandbox-repro fuzz-clean
 
 RUN_PARALLEL ?= ../scripts/run-parallel
 
@@ -9,7 +9,7 @@ GONDOLIN ?= $(TSX) ../host/bin/gondolin.ts
 GONDOLIN_BUILD_CONFIG ?=
 GONDOLIN_BUILD_EXTRA_ARGS ?=
 
-ZIG_SOURCES := $(shell find src -name '*.zig') build.zig
+ZIG_SOURCES := $(shell find src fuzz -name '*.zig') build.zig
 ZIG_BUILD_DEPS := $(ZIG_SOURCES) build.zig.zon
 # NOTE: guest image builds are driven by the host TypeScript builder (host/src/build-alpine.ts).
 HOST_BUILD_DEPS := $(shell find ../host/src ../host/bin -name '*.ts') ../host/package.json ../host/tsconfig.json
@@ -85,3 +85,44 @@ test-inner: assets
 
 clean:
 	@rm -rf zig-cache zig-out $(IMAGE_OUT)
+
+# Build fuzzers (Zig -ffuzz / libFuzzer-style runner)
+fuzz:
+	$(MAKE) -C fuzz fuzz
+
+# Run fuzzers in a VM
+fuzz-cbor:
+	$(MAKE) -C fuzz run-cbor
+
+fuzz-protocol:
+	$(MAKE) -C fuzz run-protocol
+
+fuzz-sandbox:
+	$(MAKE) -C fuzz run-sandbox
+
+# Prints the newest corpus file produced by the CBOR fuzzer
+fuzz-cbor-last:
+	$(MAKE) -C fuzz print-cbor-last
+
+# Prints the newest corpus file produced by the protocol fuzzer
+fuzz-protocol-last:
+	$(MAKE) -C fuzz print-protocol-last
+
+# Prints the newest corpus file produced by the sandbox behavior fuzzer
+fuzz-sandbox-last:
+	$(MAKE) -C fuzz print-sandbox-last
+
+# Runs the CBOR repro runner in a VM (defaults to newest corpus file)
+fuzz-cbor-repro:
+	$(MAKE) -C fuzz run-repro-cbor FILE="$(FILE)"
+
+# Runs the protocol repro runner in a VM (defaults to newest corpus file)
+fuzz-protocol-repro:
+	$(MAKE) -C fuzz run-repro-protocol FILE="$(FILE)"
+
+# Runs the sandbox behavior repro runner in a VM (defaults to newest corpus file)
+fuzz-sandbox-repro:
+	$(MAKE) -C fuzz run-repro-sandbox FILE="$(FILE)"
+
+fuzz-clean:
+	$(MAKE) -C fuzz clean
