@@ -701,15 +701,21 @@ class VirtioBridge {
     this.waitingDrain = false;
 
     socket.on("data", (chunk) => {
-      this.reader.push(chunk, (frame) => {
-        try {
-          const message = decodeMessage(frame) as IncomingMessage;
-          this.onMessage?.(message);
-        } catch (err) {
-          this.onError?.(err);
-          this.handleDisconnect();
-        }
-      });
+      try {
+        this.reader.push(chunk, (frame) => {
+          try {
+            const message = decodeMessage(frame) as IncomingMessage;
+            this.onMessage?.(message);
+          } catch (err) {
+            this.onError?.(err);
+            this.handleDisconnect();
+          }
+        });
+      } catch (err) {
+        // Malformed framing (e.g. oversized length prefix) should not crash the host.
+        this.onError?.(err);
+        this.handleDisconnect();
+      }
     });
 
     socket.on("error", (err) => {

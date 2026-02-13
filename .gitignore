@@ -15,6 +15,7 @@ node_modules/
 host/node_modules/
 host/dist/
 host/var/
+host/fuzz/artifacts/
 
 # Zensical docs output
 site/

@@ -1,4 +1,4 @@
-.PHONY: help lint typecheck build test check format fix clean hooks docs serve-docs fuzz fuzz-cbor fuzz-protocol fuzz-sandbox fuzz-cbor-last fuzz-protocol-last fuzz-sandbox-last fuzz-cbor-repro fuzz-protocol-repro fuzz-sandbox-repro fuzz-clean
+.PHONY: help lint typecheck build test check format fix clean hooks docs serve-docs fuzz fuzz-host fuzz-cbor fuzz-protocol fuzz-sandbox fuzz-cbor-last fuzz-protocol-last fuzz-sandbox-last fuzz-cbor-repro fuzz-protocol-repro fuzz-sandbox-repro fuzz-clean
 
 RUN_PARALLEL ?= ./scripts/run-parallel
 
@@ -13,7 +13,7 @@ help:
 	@echo "  make fix         - Alias for format"
 	@echo "  make clean       - Clean build artifacts"
 	@echo "  make fuzz        - Build guest fuzzers (protocol + cbor + sandbox)"
-	@echo "  make fuzz-cbor   - Run CBOR fuzzer in a VM"
+	@echo "  make fuzz-host   - Run host-side fuzzers (TypeScript)"	@echo "  make fuzz-cbor   - Run CBOR fuzzer in a VM"
 	@echo "  make fuzz-protocol - Run protocol fuzzer in a VM"
 	@echo "  make fuzz-sandbox - Run sandbox behavior fuzzer in a VM"
 	@echo "  make fuzz-cbor-last - Print newest CBOR fuzzer corpus file"
@@ -81,6 +81,11 @@ serve-docs:
 
 fuzz:
 	@$(MAKE) -C guest fuzz
+
+# Host-side fuzzing
+HOST_FUZZ_TARGET ?= virtio
+fuzz-host:
+	@$(MAKE) -C host fuzz TARGET="$(HOST_FUZZ_TARGET)"
 
 fuzz-cbor:
 	@$(MAKE) -C guest fuzz-cbor

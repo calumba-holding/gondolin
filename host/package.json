@@ -26,7 +26,8 @@
     "dev": "tsx bin/gondolin.ts exec",
     "test": "tsx --test test/*.test.ts",
     "bash": "tsx bin/gondolin.ts bash",
-    "gondolin": "tsx bin/gondolin.ts"
+    "gondolin": "tsx bin/gondolin.ts",
+    "fuzz": "tsx fuzz/cli.ts"
   },
   "keywords": [
     "sandbox",
