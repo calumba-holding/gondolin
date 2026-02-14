@@ -3673,95 +3673,6 @@ export class QemuNetworkBackend extends EventEmitter {
     }
   }
 
-  private parseHttpRequest(buffer: Buffer): { request: HttpRequestData; remaining: Buffer } | null {
-    const head = this.parseHttpHead(buffer);
-    if (!head) return null;
-
-    const { method, target, version, headers, bodyOffset } = head;
-
-    this.validateExpectHeader(version, headers);
-
-    const bodyBuffer = buffer.subarray(bodyOffset);
-    const maxBodyBytes = this.maxHttpBodyBytes;
-
-    // XXX: cap request body size to avoid unbounded buffering (Content-Length/chunked).
-    const transferEncodingHeader = headers["transfer-encoding"];
-    if (transferEncodingHeader) {
-      const encodings = transferEncodingHeader
-        .split(",")
-        .map((value) => value.trim().toLowerCase())
-        .filter(Boolean);
-
-      // Only support TE: chunked (no other transfer-codings).
-      if (
-        encodings.length === 0 ||
-        encodings[encodings.length - 1] !== "chunked" ||
-        !encodings.every((encoding) => encoding === "chunked")
-      ) {
-        throw new HttpRequestBlockedError(
-          `unsupported transfer-encoding: ${transferEncodingHeader}`,
-          501,
-          "Not Implemented"
-        );
-      }
-
-      const chunked = this.decodeChunkedBody(bodyBuffer, maxBodyBytes);
-      if (!chunked.complete) return null;
-
-      // We decoded the body, so sanitize framing-related request headers.
-      // (Hop-by-hop headers are stripped later, but Content-Length must also be correct.)
-      const sanitizedHeaders = { ...headers };
-      delete sanitizedHeaders["transfer-encoding"];
-      delete sanitizedHeaders["content-length"];
-      sanitizedHeaders["content-length"] = chunked.body.length.toString();
-
-      return {
-        request: {
-          method,
-          target,
-          version,
-          headers: sanitizedHeaders,
-          body: chunked.body,
-        },
-        remaining: bodyBuffer.subarray(chunked.bytesConsumed),
-      };
-    }
-
-    const contentLengthRaw = headers["content-length"];
-    let contentLength = 0;
-
-    if (contentLengthRaw) {
-      if (contentLengthRaw.includes(",")) {
-        throw new Error("multiple content-length headers");
-      }
-      contentLength = Number(contentLengthRaw);
-      if (!Number.isFinite(contentLength) || !Number.isInteger(contentLength) || contentLength < 0) {
-        throw new Error("invalid content-length");
-      }
-    }
-
-    if (Number.isFinite(maxBodyBytes) && contentLength > maxBodyBytes) {
-      throw new HttpRequestBlockedError(
-        `request body exceeds ${maxBodyBytes} bytes`,
-        413,
-        "Payload Too Large"
-      );
-    }
-
-    if (bodyBuffer.length < contentLength) return null;
-
-    return {
-      request: {
-        method,
-        target,
-        version,
-        headers,
-        body: bodyBuffer.subarray(0, contentLength),
-      },
-      remaining: bodyBuffer.subarray(contentLength),
-    };
-  }
-
   private decodeChunkedBodyFromReceiveBuffer(
     receiveBuffer: HttpReceiveBuffer,
     bodyOffset: number,
@@ -3833,78 +3744,6 @@ export class QemuNetworkBackend extends EventEmitter {
       if (terminator === null) {
         return { complete: false, body: Buffer.alloc(0), bytesConsumed: 0 };
       }
-    }
-  }
-
-  private decodeChunkedBody(
-    buffer: Buffer,
-    maxBodyBytes: number
-  ): { complete: boolean; body: Buffer; bytesConsumed: number } {
-    let offset = 0;
-    let totalBytes = 0;
-    const chunks: Buffer[] = [];
-    const enforceLimit = Number.isFinite(maxBodyBytes) && maxBodyBytes >= 0;
-
-    while (true) {
-      const lineEnd = buffer.indexOf("\r\n", offset);
-      if (lineEnd === -1) return { complete: false, body: Buffer.alloc(0), bytesConsumed: 0 };
-
-      const sizeLine = buffer.subarray(offset, lineEnd).toString("ascii").split(";")[0].trim();
-      const size = parseInt(sizeLine, 16);
-      if (!Number.isFinite(size) || size < 0) {
-        throw new Error("invalid chunk size");
-      }
-
-      const chunkStart = lineEnd + 2;
-
-      // last-chunk + trailer-section
-      if (size === 0) {
-        // Empty trailer-section is a single CRLF.
-        if (buffer.length < chunkStart + 2) {
-          return { complete: false, body: Buffer.alloc(0), bytesConsumed: 0 };
-        }
-
-        if (buffer[chunkStart] === 0x0d && buffer[chunkStart + 1] === 0x0a) {
-          return {
-            complete: true,
-            body: Buffer.concat(chunks, totalBytes),
-            bytesConsumed: chunkStart + 2,
-          };
-        }
-
-        const trailerEnd = buffer.indexOf("\r\n\r\n", chunkStart);
-        if (trailerEnd === -1) {
-          return { complete: false, body: Buffer.alloc(0), bytesConsumed: 0 };
-        }
-
-        return {
-          complete: true,
-          body: Buffer.concat(chunks, totalBytes),
-          bytesConsumed: trailerEnd + 4,
-        };
-      }
-
-      const chunkEnd = chunkStart + size;
-      if (buffer.length < chunkEnd + 2) {
-        return { complete: false, body: Buffer.alloc(0), bytesConsumed: 0 };
-      }
-
-      if (enforceLimit && totalBytes + size > maxBodyBytes) {
-        throw new HttpRequestBlockedError(
-          `request body exceeds ${maxBodyBytes} bytes`,
-          413,
-          "Payload Too Large"
-        );
-      }
-
-      totalBytes += size;
-      chunks.push(buffer.subarray(chunkStart, chunkEnd));
-
-      if (buffer[chunkEnd] !== 0x0d || buffer[chunkEnd + 1] !== 0x0a) {
-        throw new Error("invalid chunk terminator");
-      }
-
-      offset = chunkEnd + 2;
     }
   }
 
@@ -4252,62 +4091,6 @@ export class QemuNetworkBackend extends EventEmitter {
       }
       return;
     }
-  }
-
-  private async fetchAndRespond(
-    request: HttpRequestData,
-    defaultScheme: "http" | "https",
-    write: (chunk: Buffer) => void,
-    waitForWritable?: () => Promise<void>
-  ) {
-    const httpVersion: "HTTP/1.0" | "HTTP/1.1" =
-      request.version === "HTTP/1.0" ? "HTTP/1.0" : "HTTP/1.1";
-
-    // Asterisk-form (OPTIONS *) is valid HTTP but does not map to a URL fetch.
-    if (request.method === "OPTIONS" && request.target === "*") {
-      this.respondWithError(write, 501, "Not Implemented", httpVersion);
-      return;
-    }
-
-    // Explicitly reject Upgrade/WebSocket requests: the HTTP fetch bridge cannot
-    // tunnel upgraded connections.
-    const connection = request.headers["connection"]?.toLowerCase() ?? "";
-    const hasUpgrade =
-      Boolean(request.headers["upgrade"]) ||
-      connection
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean)
-        .includes("upgrade") ||
-      Boolean(request.headers["sec-websocket-key"]) ||
-      Boolean(request.headers["sec-websocket-version"]);
-
-    if (hasUpgrade) {
-      this.respondWithError(write, 501, "Not Implemented", httpVersion);
-      return;
-    }
-
-    const url = this.buildFetchUrl(request, defaultScheme);
-    if (!url) {
-      this.respondWithError(write, 400, "Bad Request", httpVersion);
-      return;
-    }
-
-    const hookRequest: HttpHookRequest = {
-      method: request.method,
-      url,
-      headers: this.stripHopByHopHeaders(request.headers),
-      body: request.body.length > 0 ? request.body : null,
-    };
-
-    await this.fetchHookRequestAndRespond({
-      request: hookRequest,
-      httpVersion,
-      write,
-      waitForWritable,
-      hooksAppliedFirstHop: false,
-      enableBodyHook: true,
-    });
   }
 
   private isWebSocketUpgradeRequest(request: HttpRequestData): boolean {
@@ -5705,26 +5488,8 @@ function formatError(err: unknown): string {
   return String(err);
 }
 
-function uniqueHostPatterns(patterns: string[]): string[] {
-  const out: string[] = [];
-  const seen = new Set<string>();
-  for (const raw of patterns) {
-    const normalized = normalizeHostnamePattern(raw);
-    if (!normalized) continue;
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    out.push(normalized);
-  }
-  return out;
-}
-
 function normalizeHostnamePattern(pattern: string): string {
   return pattern.trim().toLowerCase();
-}
-
-function matchesAnyHost(hostname: string, patterns: string[]): boolean {
-  const normalized = hostname.toLowerCase();
-  return patterns.some((pattern) => matchHostname(normalized, pattern));
 }
 
 function matchHostname(hostname: string, pattern: string): boolean {
