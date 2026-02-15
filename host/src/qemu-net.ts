@@ -75,7 +75,6 @@ const DEFAULT_SYNTHETIC_DNS_HOST_MAPPING: SyntheticDnsHostMappingMode =
 
 const DEFAULT_MAX_CONCURRENT_HTTP_REQUESTS = 128;
 
-
 import {
   NetworkStack,
   TcpCloseMessage,

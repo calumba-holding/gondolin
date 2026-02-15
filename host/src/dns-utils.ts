@@ -5,7 +5,9 @@ export const SYNTHETIC_DNS_HOSTMAP_PREFIX_A = 198;
 export const SYNTHETIC_DNS_HOSTMAP_PREFIX_B = 19;
 
 export function normalizeIpv4Servers(servers?: string[]): string[] {
-  const candidates = (servers && servers.length > 0 ? servers : dns.getServers())
+  const candidates = (
+    servers && servers.length > 0 ? servers : dns.getServers()
+  )
     .map((server) => server.split("%")[0])
     .filter((server) => net.isIP(server) === 4);
 

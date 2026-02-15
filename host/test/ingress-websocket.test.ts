@@ -12,7 +12,9 @@ class CaptureSocket extends EventEmitter {
   readonly writes: Buffer[] = [];
 
   write(chunk: Buffer | string) {
-    this.writes.push(Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk));
+    this.writes.push(
+      Buffer.isBuffer(chunk) ? Buffer.from(chunk) : Buffer.from(chunk),
+    );
     return true;
   }
 
@@ -31,12 +33,24 @@ class RequestCaptureDuplex extends Duplex {
     // no-op
   }
 
-  _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+  _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ) {
     this.written.push(Buffer.from(chunk));
 
-    if (!this.responded && Buffer.concat(this.written).includes(Buffer.from("\r\n\r\n"))) {
+    if (
+      !this.responded &&
+      Buffer.concat(this.written).includes(Buffer.from("\r\n\r\n"))
+    ) {
       this.responded = true;
-      this.push(Buffer.from("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n", "latin1"));
+      this.push(
+        Buffer.from(
+          "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n",
+          "latin1",
+        ),
+      );
       this.push(null);
     }
 
@@ -66,7 +80,7 @@ test("ingress: websocket upgrades are tunneled", async () => {
           "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\n" +
             "Connection: Upgrade\r\n" +
-            "\r\n"
+            "\r\n",
         );
 
         sock.write(Buffer.from("welcome"));
@@ -93,7 +107,13 @@ test("ingress: websocket upgrades are tunneled", async () => {
   const backendPort = backendAddr.port;
 
   const sandbox = {
-    openIngressStream: async ({ host, port }: { host: string; port: number }) => {
+    openIngressStream: async ({
+      host,
+      port,
+    }: {
+      host: string;
+      port: number;
+    }) => {
       const sock = net.connect(port, host);
       await once(sock, "connect");
       return sock;
@@ -105,7 +125,11 @@ test("ingress: websocket upgrades are tunneled", async () => {
   } as any;
 
   const gateway = new IngressGateway(sandbox, listeners);
-  const access = await gateway.listen({ listenHost: "127.0.0.1", listenPort: 0, allowWebSockets: true });
+  const access = await gateway.listen({
+    listenHost: "127.0.0.1",
+    listenPort: 0,
+    allowWebSockets: true,
+  });
 
   const client = net.connect(access.port, access.host);
   await once(client, "connect");
@@ -118,7 +142,7 @@ test("ingress: websocket upgrades are tunneled", async () => {
       "Sec-WebSocket-Key: x\r\n" +
       "Sec-WebSocket-Version: 13\r\n" +
       "\r\n" +
-      "hello"
+      "hello",
   );
 
   let received = Buffer.alloc(0);
@@ -287,7 +311,9 @@ test("ingress: websocket upgrade forwards joined host header values", async () =
   const socket = new CaptureSocket();
   await (gateway as any).handleUpgrade(req, socket, Buffer.alloc(0));
 
-  const forwarded = Buffer.concat(upstream.written).toString("latin1").toLowerCase();
+  const forwarded = Buffer.concat(upstream.written)
+    .toString("latin1")
+    .toLowerCase();
   assert.match(forwarded, /\r\nhost: first\.example,second\.example\r\n/);
   assert.doesNotMatch(forwarded, /\r\nhost: localhost\r\n/);
 });

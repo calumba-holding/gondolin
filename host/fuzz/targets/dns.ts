@@ -1,4 +1,10 @@
-import { parseDnsQuery, buildSyntheticDnsResponse, DNS_TYPE_A, DNS_TYPE_AAAA, DNS_CLASS_IN } from "../../src/dns";
+import {
+  parseDnsQuery,
+  buildSyntheticDnsResponse,
+  DNS_TYPE_A,
+  DNS_TYPE_AAAA,
+  DNS_CLASS_IN,
+} from "../../src/dns";
 import { XorShift32 } from "../rng";
 import type { FuzzTarget } from "./types";
 

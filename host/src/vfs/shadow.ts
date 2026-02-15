@@ -4,7 +4,12 @@ import type { Dirent } from "node:fs";
 import { createErrnoError } from "./errors";
 import type { VirtualFileHandle, VirtualProvider, VfsStatfs } from "./node";
 import { delegateStatfsOrEnosys } from "./statfs";
-import { ERRNO, isWriteFlag, normalizeVfsPath, VirtualProviderClass } from "./utils";
+import {
+  ERRNO,
+  isWriteFlag,
+  normalizeVfsPath,
+  VirtualProviderClass,
+} from "./utils";
 import { MemoryProvider } from "./node";
 
 export type ShadowWriteMode =
@@ -63,9 +68,13 @@ export type ShadowProviderOptions = {
  * Note: inputs are normalized with `normalizeVfsPath()`, so a relative string like
  * `".env"` will be treated as `"/.env"` (it is not relative to the directory being accessed).
  */
-export function createShadowPathPredicate(shadowPaths: string[]): ShadowPredicate {
+export function createShadowPathPredicate(
+  shadowPaths: string[],
+): ShadowPredicate {
   const normalized = Array.from(
-    new Set(shadowPaths.map((p) => normalizeVfsPath(p)).filter((p) => p !== "/"))
+    new Set(
+      shadowPaths.map((p) => normalizeVfsPath(p)).filter((p) => p !== "/"),
+    ),
   ).sort((a, b) => b.length - a.length);
 
   return ({ path }) => {
@@ -81,7 +90,11 @@ export function createShadowPathPredicate(shadowPaths: string[]): ShadowPredicat
 function isNoEntryError(err: unknown) {
   if (!err || typeof err !== "object") return false;
   const error = err as NodeJS.ErrnoException;
-  return error.code === "ENOENT" || error.code === "ERRNO_2" || error.errno === ERRNO.ENOENT;
+  return (
+    error.code === "ENOENT" ||
+    error.code === "ERRNO_2" ||
+    error.errno === ERRNO.ENOENT
+  );
 }
 
 function getEntryName(entry: string | Dirent) {
@@ -96,7 +109,10 @@ function getEntryName(entry: string | Dirent) {
  * - Shadowed entries are omitted from directory listings (unless present in tmpfs upper layer)
  * - Write ops are either denied (default) or redirected to tmpfs
  */
-export class ShadowProvider extends VirtualProviderClass implements VirtualProvider {
+export class ShadowProvider
+  extends VirtualProviderClass
+  implements VirtualProvider
+{
   private readonly shouldShadow: ShadowPredicate;
   private readonly writeMode: ShadowWriteMode;
   private readonly tmpfs: VirtualProvider;
@@ -105,7 +121,7 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
 
   constructor(
     private readonly backend: VirtualProvider,
-    options: ShadowProviderOptions
+    options: ShadowProviderOptions,
   ) {
     super();
     if (!options || typeof options.shouldShadow !== "function") {
@@ -141,25 +157,47 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   private shadowedForRename(op: string, oldPath: string, newPath: string) {
     const from = normalizeVfsPath(oldPath);
     const to = normalizeVfsPath(newPath);
-    const fromShadow = this.shouldShadow({ op, path: from, oldPath: from, newPath: to });
-    const toShadow = this.shouldShadow({ op, path: to, oldPath: from, newPath: to });
+    const fromShadow = this.shouldShadow({
+      op,
+      path: from,
+      oldPath: from,
+      newPath: to,
+    });
+    const toShadow = this.shouldShadow({
+      op,
+      path: to,
+      oldPath: from,
+      newPath: to,
+    });
     return { from, to, fromShadow, toShadow };
   }
 
-  private async resolvesToShadowed(op: string, entryPath: string, flags?: string) {
+  private async resolvesToShadowed(
+    op: string,
+    entryPath: string,
+    flags?: string,
+  ) {
     if (!this.denySymlinkBypass || !this.backend.realpath) return false;
     try {
-      const resolved = normalizeVfsPath(await this.backend.realpath(normalizeVfsPath(entryPath)));
+      const resolved = normalizeVfsPath(
+        await this.backend.realpath(normalizeVfsPath(entryPath)),
+      );
       return this.shouldShadow({ op, path: resolved, flags });
     } catch {
       return false;
     }
   }
 
-  private resolvesToShadowedSync(op: string, entryPath: string, flags?: string) {
+  private resolvesToShadowedSync(
+    op: string,
+    entryPath: string,
+    flags?: string,
+  ) {
     if (!this.denySymlinkBypass || !this.backend.realpathSync) return false;
     try {
-      const resolved = normalizeVfsPath(this.backend.realpathSync(normalizeVfsPath(entryPath)));
+      const resolved = normalizeVfsPath(
+        this.backend.realpathSync(normalizeVfsPath(entryPath)),
+      );
       return this.shouldShadow({ op, path: resolved, flags });
     } catch {
       return false;
@@ -168,10 +206,17 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
 
   // === provider API ===
 
-  async open(entryPath: string, flags: string, mode?: number): Promise<VirtualFileHandle> {
+  async open(
+    entryPath: string,
+    flags: string,
+    mode?: number,
+  ): Promise<VirtualFileHandle> {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("open", p, flags) || (await this.resolvesToShadowed("open", p, flags))) {
+    if (
+      this.shadowedFor("open", p, flags) ||
+      (await this.resolvesToShadowed("open", p, flags))
+    ) {
       return this.openShadowed(p, flags, mode);
     }
 
@@ -181,7 +226,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   openSync(entryPath: string, flags: string, mode?: number): VirtualFileHandle {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("open", p, flags) || this.resolvesToShadowedSync("open", p, flags)) {
+    if (
+      this.shadowedFor("open", p, flags) ||
+      this.resolvesToShadowedSync("open", p, flags)
+    ) {
       return this.openShadowedSync(p, flags, mode);
     }
 
@@ -191,7 +239,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async stat(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("stat", p) || (await this.resolvesToShadowed("stat", p))) {
+    if (
+      this.shadowedFor("stat", p) ||
+      (await this.resolvesToShadowed("stat", p))
+    ) {
       return this.statShadowed(p, options);
     }
 
@@ -211,7 +262,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async lstat(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("lstat", p) || (await this.resolvesToShadowed("lstat", p))) {
+    if (
+      this.shadowedFor("lstat", p) ||
+      (await this.resolvesToShadowed("lstat", p))
+    ) {
       return this.lstatShadowed(p, options);
     }
 
@@ -221,7 +275,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   lstatSync(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("lstat", p) || this.resolvesToShadowedSync("lstat", p)) {
+    if (
+      this.shadowedFor("lstat", p) ||
+      this.resolvesToShadowedSync("lstat", p)
+    ) {
       return this.lstatShadowedSync(p, options);
     }
 
@@ -232,12 +289,19 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
     const p = normalizeVfsPath(entryPath);
 
     // If the directory itself is shadowed, it behaves as non-existent.
-    if (this.shadowedFor("readdir", p) || (await this.resolvesToShadowed("readdir", p))) {
+    if (
+      this.shadowedFor("readdir", p) ||
+      (await this.resolvesToShadowed("readdir", p))
+    ) {
       return this.readdirShadowed(p, options);
     }
 
-    const lower = (await this.backend.readdir(p, options)) as Array<string | Dirent>;
-    const withTypes = Boolean((options as { withFileTypes?: boolean } | undefined)?.withFileTypes);
+    const lower = (await this.backend.readdir(p, options)) as Array<
+      string | Dirent
+    >;
+    const withTypes = Boolean(
+      (options as { withFileTypes?: boolean } | undefined)?.withFileTypes,
+    );
 
     // Filter lower entries by policy.
     const filteredLower = lower.filter((entry) => {
@@ -276,12 +340,19 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   readdirSync(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("readdir", p) || this.resolvesToShadowedSync("readdir", p)) {
+    if (
+      this.shadowedFor("readdir", p) ||
+      this.resolvesToShadowedSync("readdir", p)
+    ) {
       return this.readdirShadowedSync(p, options);
     }
 
-    const lower = this.backend.readdirSync(p, options) as Array<string | Dirent>;
-    const withTypes = Boolean((options as { withFileTypes?: boolean } | undefined)?.withFileTypes);
+    const lower = this.backend.readdirSync(p, options) as Array<
+      string | Dirent
+    >;
+    const withTypes = Boolean(
+      (options as { withFileTypes?: boolean } | undefined)?.withFileTypes,
+    );
 
     const filteredLower = lower.filter((entry) => {
       const name = getEntryName(entry);
@@ -318,7 +389,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async mkdir(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("mkdir", p) || (await this.resolvesToShadowed("mkdir", p))) {
+    if (
+      this.shadowedFor("mkdir", p) ||
+      (await this.resolvesToShadowed("mkdir", p))
+    ) {
       return this.writeShadowed("mkdir", p, () => this.tmpfs.mkdir(p, options));
     }
 
@@ -328,8 +402,13 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   mkdirSync(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("mkdir", p) || this.resolvesToShadowedSync("mkdir", p)) {
-      return this.writeShadowedSync("mkdir", p, () => this.tmpfs.mkdirSync(p, options));
+    if (
+      this.shadowedFor("mkdir", p) ||
+      this.resolvesToShadowedSync("mkdir", p)
+    ) {
+      return this.writeShadowedSync("mkdir", p, () =>
+        this.tmpfs.mkdirSync(p, options),
+      );
     }
 
     return this.backend.mkdirSync(p, options);
@@ -338,7 +417,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async rmdir(entryPath: string) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("rmdir", p) || (await this.resolvesToShadowed("rmdir", p))) {
+    if (
+      this.shadowedFor("rmdir", p) ||
+      (await this.resolvesToShadowed("rmdir", p))
+    ) {
       return this.writeShadowed("rmdir", p, async () => {
         try {
           await this.tmpfs.rmdir(p);
@@ -354,7 +436,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   rmdirSync(entryPath: string) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("rmdir", p) || this.resolvesToShadowedSync("rmdir", p)) {
+    if (
+      this.shadowedFor("rmdir", p) ||
+      this.resolvesToShadowedSync("rmdir", p)
+    ) {
       return this.writeShadowedSync("rmdir", p, () => {
         try {
           return this.tmpfs.rmdirSync(p);
@@ -370,7 +455,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async unlink(entryPath: string) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("unlink", p) || (await this.resolvesToShadowed("unlink", p))) {
+    if (
+      this.shadowedFor("unlink", p) ||
+      (await this.resolvesToShadowed("unlink", p))
+    ) {
       return this.writeShadowed("unlink", p, async () => {
         try {
           await this.tmpfs.unlink(p);
@@ -386,7 +474,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   unlinkSync(entryPath: string) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("unlink", p) || this.resolvesToShadowedSync("unlink", p)) {
+    if (
+      this.shadowedFor("unlink", p) ||
+      this.resolvesToShadowedSync("unlink", p)
+    ) {
       return this.writeShadowedSync("unlink", p, () => {
         try {
           return this.tmpfs.unlinkSync(p);
@@ -400,15 +491,27 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   }
 
   async rename(oldPath: string, newPath: string) {
-    const { from, to, fromShadow, toShadow } = this.shadowedForRename("rename", oldPath, newPath);
+    const { from, to, fromShadow, toShadow } = this.shadowedForRename(
+      "rename",
+      oldPath,
+      newPath,
+    );
 
-    const fromResolved = this.denySymlinkBypass ? await this.resolvesToShadowed("rename", from) : false;
-    const toResolved = this.denySymlinkBypass ? await this.resolvesToShadowed("rename", to) : false;
+    const fromResolved = this.denySymlinkBypass
+      ? await this.resolvesToShadowed("rename", from)
+      : false;
+    const toResolved = this.denySymlinkBypass
+      ? await this.resolvesToShadowed("rename", to)
+      : false;
 
     const shadow = fromShadow || toShadow || fromResolved || toResolved;
 
     if (shadow) {
-      if (this.writeMode === "tmpfs" && (fromShadow || fromResolved) && (toShadow || toResolved)) {
+      if (
+        this.writeMode === "tmpfs" &&
+        (fromShadow || fromResolved) &&
+        (toShadow || toResolved)
+      ) {
         return this.tmpfs.rename(from, to);
       }
       throw createErrnoError(ERRNO.EXDEV, "rename", `${from} -> ${to}`);
@@ -418,15 +521,27 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   }
 
   renameSync(oldPath: string, newPath: string) {
-    const { from, to, fromShadow, toShadow } = this.shadowedForRename("rename", oldPath, newPath);
+    const { from, to, fromShadow, toShadow } = this.shadowedForRename(
+      "rename",
+      oldPath,
+      newPath,
+    );
 
-    const fromResolved = this.denySymlinkBypass ? this.resolvesToShadowedSync("rename", from) : false;
-    const toResolved = this.denySymlinkBypass ? this.resolvesToShadowedSync("rename", to) : false;
+    const fromResolved = this.denySymlinkBypass
+      ? this.resolvesToShadowedSync("rename", from)
+      : false;
+    const toResolved = this.denySymlinkBypass
+      ? this.resolvesToShadowedSync("rename", to)
+      : false;
 
     const shadow = fromShadow || toShadow || fromResolved || toResolved;
 
     if (shadow) {
-      if (this.writeMode === "tmpfs" && (fromShadow || fromResolved) && (toShadow || toResolved)) {
+      if (
+        this.writeMode === "tmpfs" &&
+        (fromShadow || fromResolved) &&
+        (toShadow || toResolved)
+      ) {
         return this.tmpfs.renameSync(from, to);
       }
       throw createErrnoError(ERRNO.EXDEV, "rename", `${from} -> ${to}`);
@@ -438,7 +553,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async readlink(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("readlink", p) || (await this.resolvesToShadowed("readlink", p))) {
+    if (
+      this.shadowedFor("readlink", p) ||
+      (await this.resolvesToShadowed("readlink", p))
+    ) {
       if (this.writeMode === "tmpfs" && this.tmpfs.readlink) {
         return this.tmpfs.readlink(p, options);
       }
@@ -454,7 +572,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   readlinkSync(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("readlink", p) || this.resolvesToShadowedSync("readlink", p)) {
+    if (
+      this.shadowedFor("readlink", p) ||
+      this.resolvesToShadowedSync("readlink", p)
+    ) {
       if (this.writeMode === "tmpfs" && this.tmpfs.readlinkSync) {
         return this.tmpfs.readlinkSync(p, options);
       }
@@ -470,7 +591,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async symlink(target: string, entryPath: string, type?: string) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("symlink", p) || (await this.resolvesToShadowed("symlink", p))) {
+    if (
+      this.shadowedFor("symlink", p) ||
+      (await this.resolvesToShadowed("symlink", p))
+    ) {
       return this.writeShadowed("symlink", p, () => {
         if (this.tmpfs.symlink) {
           return this.tmpfs.symlink(target, p, type);
@@ -488,7 +612,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   symlinkSync(target: string, entryPath: string, type?: string) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("symlink", p) || this.resolvesToShadowedSync("symlink", p)) {
+    if (
+      this.shadowedFor("symlink", p) ||
+      this.resolvesToShadowedSync("symlink", p)
+    ) {
       return this.writeShadowedSync("symlink", p, () => {
         if (this.tmpfs.symlinkSync) {
           return this.tmpfs.symlinkSync(target, p, type);
@@ -506,7 +633,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async realpath(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("realpath", p) || (await this.resolvesToShadowed("realpath", p))) {
+    if (
+      this.shadowedFor("realpath", p) ||
+      (await this.resolvesToShadowed("realpath", p))
+    ) {
       if (this.writeMode === "tmpfs") {
         if (this.tmpfs.realpath) {
           return this.tmpfs.realpath(p, options);
@@ -525,7 +655,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   realpathSync(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("realpath", p) || this.resolvesToShadowedSync("realpath", p)) {
+    if (
+      this.shadowedFor("realpath", p) ||
+      this.resolvesToShadowedSync("realpath", p)
+    ) {
       if (this.writeMode === "tmpfs") {
         if (this.tmpfs.realpathSync) {
           return this.tmpfs.realpathSync(p, options);
@@ -544,7 +677,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   async access(entryPath: string, mode?: number) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("access", p) || (await this.resolvesToShadowed("access", p))) {
+    if (
+      this.shadowedFor("access", p) ||
+      (await this.resolvesToShadowed("access", p))
+    ) {
       if (this.writeMode === "tmpfs") {
         if (this.tmpfs.access) {
           return this.tmpfs.access(p, mode);
@@ -563,7 +699,10 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
   accessSync(entryPath: string, mode?: number) {
     const p = normalizeVfsPath(entryPath);
 
-    if (this.shadowedFor("access", p) || this.resolvesToShadowedSync("access", p)) {
+    if (
+      this.shadowedFor("access", p) ||
+      this.resolvesToShadowedSync("access", p)
+    ) {
       if (this.writeMode === "tmpfs") {
         if (this.tmpfs.accessSync) {
           return this.tmpfs.accessSync(p, mode);
@@ -591,12 +730,21 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
 
   watchAsync(entryPath: string, options?: object) {
     const p = normalizeVfsPath(entryPath);
-    return this.backend.watchAsync?.(p, options) ?? super.watchAsync(p, options);
+    return (
+      this.backend.watchAsync?.(p, options) ?? super.watchAsync(p, options)
+    );
   }
 
-  watchFile(entryPath: string, options?: object, listener?: (...args: unknown[]) => void) {
+  watchFile(
+    entryPath: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ) {
     const p = normalizeVfsPath(entryPath);
-    return this.backend.watchFile?.(p, options, listener) ?? super.watchFile(p, options, listener);
+    return (
+      this.backend.watchFile?.(p, options, listener) ??
+      super.watchFile(p, options, listener)
+    );
   }
 
   unwatchFile(entryPath: string, listener?: (...args: unknown[]) => void) {
@@ -621,7 +769,11 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
 
   // === shadowed operation helpers ===
 
-  private async openShadowed(entryPath: string, flags: string, mode?: number): Promise<VirtualFileHandle> {
+  private async openShadowed(
+    entryPath: string,
+    flags: string,
+    mode?: number,
+  ): Promise<VirtualFileHandle> {
     if (this.writeMode === "tmpfs") {
       return this.tmpfs.open(entryPath, flags, mode);
     }
@@ -632,7 +784,11 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
     throw createErrnoError(ERRNO.ENOENT, "open", entryPath);
   }
 
-  private openShadowedSync(entryPath: string, flags: string, mode?: number): VirtualFileHandle {
+  private openShadowedSync(
+    entryPath: string,
+    flags: string,
+    mode?: number,
+  ): VirtualFileHandle {
     if (this.writeMode === "tmpfs") {
       return this.tmpfs.openSync(entryPath, flags, mode);
     }
@@ -687,7 +843,9 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
 
   private async tryReaddirUpper(entryPath: string, options?: object) {
     try {
-      return (await this.tmpfs.readdir(entryPath, options)) as Array<string | Dirent>;
+      return (await this.tmpfs.readdir(entryPath, options)) as Array<
+        string | Dirent
+      >;
     } catch (err) {
       if (isNoEntryError(err)) return [];
       throw err;
@@ -696,14 +854,20 @@ export class ShadowProvider extends VirtualProviderClass implements VirtualProvi
 
   private tryReaddirUpperSync(entryPath: string, options?: object) {
     try {
-      return this.tmpfs.readdirSync(entryPath, options) as Array<string | Dirent>;
+      return this.tmpfs.readdirSync(entryPath, options) as Array<
+        string | Dirent
+      >;
     } catch (err) {
       if (isNoEntryError(err)) return [];
       throw err;
     }
   }
 
-  private async writeShadowed<T>(op: string, entryPath: string, fn: () => Promise<T> | T) {
+  private async writeShadowed<T>(
+    op: string,
+    entryPath: string,
+    fn: () => Promise<T> | T,
+  ) {
     if (this.writeMode === "deny") {
       throw createErrnoError(this.denyWriteErrno, op, entryPath);
     }

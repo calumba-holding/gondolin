@@ -23,7 +23,12 @@ function makeTempDir(t: TestContext, prefix = "gondolin-mitm-") {
   return dir;
 }
 
-function assertLooksLikeMitmCa(ca: { keyPem: string; certPem: string; key: any; cert: any }) {
+function assertLooksLikeMitmCa(ca: {
+  keyPem: string;
+  certPem: string;
+  key: any;
+  cert: any;
+}) {
   assert.ok(ca.keyPem.includes("BEGIN RSA PRIVATE KEY"));
   assert.ok(ca.certPem.includes("BEGIN CERTIFICATE"));
 
@@ -57,8 +62,12 @@ function assertLooksLikeMitmCa(ca: { keyPem: string; certPem: string; key: any; 
   // Validity window (10 years)
   assert.ok(cert.validity.notBefore instanceof Date);
   assert.ok(cert.validity.notAfter instanceof Date);
-  assert.ok(cert.validity.notAfter.getTime() > cert.validity.notBefore.getTime());
-  const days = (cert.validity.notAfter.getTime() - cert.validity.notBefore.getTime()) / (24 * 60 * 60 * 1000);
+  assert.ok(
+    cert.validity.notAfter.getTime() > cert.validity.notBefore.getTime(),
+  );
+  const days =
+    (cert.validity.notAfter.getTime() - cert.validity.notBefore.getTime()) /
+    (24 * 60 * 60 * 1000);
   assert.ok(days > 3600 && days < 3700);
 
   // Public/private key match (compare modulus n)
@@ -75,7 +84,7 @@ test("mitm getDefaultMitmCertDir respects XDG_CACHE_HOME", (t) => {
   process.env.XDG_CACHE_HOME = "/tmp/gondolin-xdg-cache-test";
   assert.equal(
     getDefaultMitmCertDir(),
-    path.join("/tmp/gondolin-xdg-cache-test", "gondolin", "ssl")
+    path.join("/tmp/gondolin-xdg-cache-test", "gondolin", "ssl"),
   );
 });
 
@@ -136,7 +145,10 @@ test("mitm loadOrCreateMitmCaSync regenerates CA with unsafe serial", (t) => {
   ]);
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
-  fs.writeFileSync(path.join(dir, "ca.key"), forge.pki.privateKeyToPem(keys.privateKey));
+  fs.writeFileSync(
+    path.join(dir, "ca.key"),
+    forge.pki.privateKeyToPem(keys.privateKey),
+  );
   const badCertPem = forge.pki.certificateToPem(cert);
   fs.writeFileSync(path.join(dir, "ca.crt"), badCertPem);
 
@@ -166,5 +178,8 @@ test("mitm loadOrCreateMitmCa regenerates when files are missing/corrupt", async
   assertLooksLikeMitmCa(ca);
 
   // Corrupt file should have been overwritten
-  assert.notEqual(fs.readFileSync(path.join(dir, "ca.key"), "utf8"), "not a key");
+  assert.notEqual(
+    fs.readFileSync(path.join(dir, "ca.key"), "utf8"),
+    "not a key",
+  );
 });

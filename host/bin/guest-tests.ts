@@ -38,8 +38,14 @@ async function dumpGuestLogs(vm: VM, label: string) {
   // Segfaults in the guest often only show up in dmesg, not in the test
   // binary output. Grab a tail to make CI failures actionable.
   const commands: Array<{ title: string; cmd: string | string[] }> = [
-    { title: `dmesg (tail) after ${label}`, cmd: ["/bin/sh", "-lc", "dmesg | tail -n 200 || true"] },
-    { title: `/tmp listing after ${label}`, cmd: ["/bin/sh", "-lc", "ls -lah /tmp | tail -n 200 || true"] },
+    {
+      title: `dmesg (tail) after ${label}`,
+      cmd: ["/bin/sh", "-lc", "dmesg | tail -n 200 || true"],
+    },
+    {
+      title: `/tmp listing after ${label}`,
+      cmd: ["/bin/sh", "-lc", "ls -lah /tmp | tail -n 200 || true"],
+    },
   ];
 
   for (const { title, cmd } of commands) {
@@ -52,7 +58,9 @@ async function dumpGuestLogs(vm: VM, label: string) {
       process.stderr.write("\n----- end -----\n");
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`\n----- ${title} (failed) -----\n${detail}\n----- end -----\n`);
+      process.stderr.write(
+        `\n----- ${title} (failed) -----\n${detail}\n----- end -----\n`,
+      );
     }
   }
 }
@@ -97,7 +105,10 @@ async function runTest(vm: VM, label: string, payload: Buffer) {
   const guestPath = `/tmp/sandboxd-${label}-tests`;
 
   const expectedSize = payload.length;
-  const expectedSha256 = crypto.createHash("sha256").update(payload).digest("hex");
+  const expectedSha256 = crypto
+    .createHash("sha256")
+    .update(payload)
+    .digest("hex");
 
   // If a test binary segfaults, we want to catch it in dmesg.
   // Enabling core dumps might help too (depends on guest settings).
@@ -118,7 +129,11 @@ async function runTest(vm: VM, label: string, payload: Buffer) {
     ].join(" && "),
   ];
 
-  const proc = vm.exec(command, { stdin: payload, stdout: "pipe", stderr: "pipe" });
+  const proc = vm.exec(command, {
+    stdin: payload,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
   // Stream output as it arrives
   for await (const chunk of proc.output()) {
@@ -133,7 +148,7 @@ async function runTest(vm: VM, label: string, payload: Buffer) {
   if (result.exitCode !== 0) {
     await dumpGuestLogs(vm, label);
     throw new Error(
-      `guest ${label} tests failed with exit code ${formatExitCode(result.exitCode)}`
+      `guest ${label} tests failed with exit code ${formatExitCode(result.exitCode)}`,
     );
   }
 }
@@ -144,7 +159,7 @@ async function main() {
   if (!hasHardwareAccel() && process.env.GONDOLIN_FORCE_VM_TESTS !== "1") {
     process.stderr.write(
       "Skipping guest tests: hardware virtualization not available (KVM on Linux, HVF on macOS).\n" +
-        "Set GONDOLIN_FORCE_VM_TESTS=1 to run anyway (may be slow).\n"
+        "Set GONDOLIN_FORCE_VM_TESTS=1 to run anyway (may be slow).\n",
     );
     return;
   }
@@ -159,7 +174,9 @@ async function main() {
   }
 
   const consoleMode =
-    process.env.GONDOLIN_VM_CONSOLE === "stdio" || process.env.CI ? "stdio" : "none";
+    process.env.GONDOLIN_VM_CONSOLE === "stdio" || process.env.CI
+      ? "stdio"
+      : "none";
 
   const vm = new VM({
     sandbox: {

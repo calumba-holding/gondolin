@@ -38,8 +38,8 @@ function makeTempAssetsDir(arch: "aarch64" | "x86_64"): string {
         },
       },
       null,
-      2
-    )
+      2,
+    ),
   );
 
   return dir;

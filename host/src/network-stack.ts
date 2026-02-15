@@ -1,7 +1,8 @@
 import { EventEmitter } from "events";
 import { performance } from "perf_hooks";
-import dns from "dns";
 import net from "net";
+
+import { normalizeIpv4Servers } from "./dns-utils";
 
 // Protocol Constants
 const ETH_P_IP = 0x0800;
@@ -44,22 +45,12 @@ const DHCP_OPT_SERVER_ID = 54;
 const DHCP_OPT_END = 255;
 
 function normalizeDnsServers(servers?: string[]): string[] {
-  const candidates = (servers && servers.length > 0 ? servers : dns.getServers())
-    .map((server) => server.split("%")[0])
-    .filter((server) => net.isIP(server) === 4)
+  const candidates = normalizeIpv4Servers(servers)
     // Guest resolvers must be reachable over the virtual NIC; loopback resolvers are not.
     .filter((server) => !server.startsWith("127."))
     .filter((server) => server !== "0.0.0.0" && server !== "255.255.255.255");
 
-  const unique: string[] = [];
-  const seen = new Set<string>();
-  for (const server of candidates) {
-    if (seen.has(server)) continue;
-    seen.add(server);
-    unique.push(server);
-  }
-
-  return unique.length > 0 ? unique : ["8.8.8.8"];
+  return candidates.length > 0 ? candidates : ["8.8.8.8"];
 }
 
 export type UdpSendMessage = {
@@ -243,7 +234,12 @@ export class NetworkStack extends EventEmitter {
     this.dnsServers = normalizeDnsServers(options.dnsServers);
     this.callbacks = options.callbacks;
     this.allowTcpFlow = options.allowTcpFlow ?? (() => true);
-    this.sshPorts = new Set((options.sshPorts && options.sshPorts.length > 0 ? options.sshPorts : [22]).filter((p) => Number.isInteger(p) && p > 0 && p <= 65535));
+    this.sshPorts = new Set(
+      (options.sshPorts && options.sshPorts.length > 0
+        ? options.sshPorts
+        : [22]
+      ).filter((p) => Number.isInteger(p) && p > 0 && p <= 65535),
+    );
     this.TX_QUEUE_MAX_BYTES = options.txQueueMaxBytes ?? 8 * 1024 * 1024;
   }
 
@@ -307,7 +303,10 @@ export class NetworkStack extends EventEmitter {
       }
     }
 
-    if (this.txQueueHighSize < this.TX_BUFFER_LOW_WATER && this.txQueuePaused.size > 0) {
+    if (
+      this.txQueueHighSize < this.TX_BUFFER_LOW_WATER &&
+      this.txQueuePaused.size > 0
+    ) {
       for (const key of this.txQueuePaused) {
         if (!this.txFlowPaused.has(key)) {
           this.callbacks.onTcpResume({ key });
@@ -403,7 +402,10 @@ export class NetworkStack extends EventEmitter {
 
       // For high-priority packets (TCP/ARP), evict low-priority packets first.
       let evictedBytes = 0;
-      while (this.txQueueLow.length > 0 && this.txQueueSize + packet.length > this.TX_QUEUE_MAX_BYTES) {
+      while (
+        this.txQueueLow.length > 0 &&
+        this.txQueueSize + packet.length > this.TX_QUEUE_MAX_BYTES
+      ) {
         const evicted = this.txQueueLow.shift()!;
         evictedBytes += evicted.length;
         this.txQueueSize -= evicted.length;
@@ -583,7 +585,12 @@ export class NetworkStack extends EventEmitter {
 
     const packet = Buffer.concat([header, payload]);
 
-    if (dstIP[0] === 255 && dstIP[1] === 255 && dstIP[2] === 255 && dstIP[3] === 255) {
+    if (
+      dstIP[0] === 255 &&
+      dstIP[1] === 255 &&
+      dstIP[2] === 255 &&
+      dstIP[3] === 255
+    ) {
       this.sendBroadcast(packet, ETH_P_IP);
     } else {
       this.send(packet, ETH_P_IP);
@@ -664,8 +671,21 @@ export class NetworkStack extends EventEmitter {
     return { status: "deny", reason: "unknown-protocol" } as const;
   }
 
-  private rejectTcpFlow(session: TcpSession, key: string, ack: number, reason: string) {
-    this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, ack, 0x14);
+  private rejectTcpFlow(
+    session: TcpSession,
+    key: string,
+    ack: number,
+    reason: string,
+  ) {
+    this.sendTCP(
+      session.srcIP,
+      session.srcPort,
+      session.dstIP,
+      session.dstPort,
+      session.mySeq,
+      ack,
+      0x14,
+    );
     this.callbacks.onTcpClose({ key, destroy: true });
     this.clearPauseState(key);
     this.natTable.delete(key);
@@ -729,7 +749,15 @@ export class NetworkStack extends EventEmitter {
 
     if (!session) {
       if (!SYN) {
-        this.sendTCP(srcIP, srcPort, dstIP, dstPort, 0, seq + (payload.length || 1), 0x04);
+        this.sendTCP(
+          srcIP,
+          srcPort,
+          dstIP,
+          dstPort,
+          0,
+          seq + (payload.length || 1),
+          0x04,
+        );
       }
       return;
     }
@@ -761,14 +789,30 @@ export class NetworkStack extends EventEmitter {
 
       if (seq > expectedSeq) {
         // Out-of-order: re-ACK what we've already seen.
-        this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
+        this.sendTCP(
+          session.srcIP,
+          session.srcPort,
+          session.dstIP,
+          session.dstPort,
+          session.mySeq,
+          session.myAck,
+          0x10,
+        );
         return;
       }
 
       const skip = Math.max(0, expectedSeq - seq);
       if (skip >= payload.length) {
         // Pure retransmit (or segment contains only already-acked bytes)
-        this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
+        this.sendTCP(
+          session.srcIP,
+          session.srcPort,
+          session.dstIP,
+          session.dstPort,
+          session.mySeq,
+          session.myAck,
+          0x10,
+        );
         if (!FIN) {
           return;
         }
@@ -780,7 +824,10 @@ export class NetworkStack extends EventEmitter {
 
       if (!session.flowProtocol) {
         session.pendingData = Buffer.concat([session.pendingData, newPayload]);
-        const classification = this.classifyTcpFlow(session.pendingData, session.dstPort);
+        const classification = this.classifyTcpFlow(
+          session.pendingData,
+          session.dstPort,
+        );
 
         if (classification.status === "need-more") {
           if (session.pendingData.length >= this.MAX_FLOW_SNIFF) {
@@ -833,7 +880,15 @@ export class NetworkStack extends EventEmitter {
 
       // ACK payload immediately unless FIN is also set (FIN handling below will ACK).
       if (!FIN) {
-        this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
+        this.sendTCP(
+          session.srcIP,
+          session.srcPort,
+          session.dstIP,
+          session.dstPort,
+          session.mySeq,
+          session.myAck,
+          0x10,
+        );
       }
     }
 
@@ -843,13 +898,29 @@ export class NetworkStack extends EventEmitter {
       const finSeq = seq + payload.length;
       if (finSeq > session.myAck) {
         // Out-of-order FIN: keep ACKing the last in-order byte.
-        this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
+        this.sendTCP(
+          session.srcIP,
+          session.srcPort,
+          session.dstIP,
+          session.dstPort,
+          session.mySeq,
+          session.myAck,
+          0x10,
+        );
         return;
       }
 
       if (finSeq < session.myAck) {
         // Duplicate FIN (already acked)
-        this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
+        this.sendTCP(
+          session.srcIP,
+          session.srcPort,
+          session.dstIP,
+          session.dstPort,
+          session.mySeq,
+          session.myAck,
+          0x10,
+        );
         return;
       }
 
@@ -857,8 +928,19 @@ export class NetworkStack extends EventEmitter {
       this.callbacks.onTcpClose({ key, destroy: false });
       session.myAck++;
 
-      this.sendTCP(session.srcIP, session.srcPort, session.dstIP, session.dstPort, session.mySeq, session.myAck, 0x10);
-      if (session.state === "CLOSED_BY_REMOTE" || session.state === "FIN_WAIT") {
+      this.sendTCP(
+        session.srcIP,
+        session.srcPort,
+        session.dstIP,
+        session.dstPort,
+        session.mySeq,
+        session.myAck,
+        0x10,
+      );
+      if (
+        session.state === "CLOSED_BY_REMOTE" ||
+        session.state === "FIN_WAIT"
+      ) {
         this.clearPauseState(key);
         this.natTable.delete(key);
       } else {
@@ -875,7 +957,7 @@ export class NetworkStack extends EventEmitter {
     seq: number,
     ack: number,
     flags: number,
-    payload: Buffer = Buffer.alloc(0)
+    payload: Buffer = Buffer.alloc(0),
   ) {
     const header = Buffer.alloc(20);
     header.writeUInt16BE(srcPort, 0);
@@ -1024,12 +1106,16 @@ export class NetworkStack extends EventEmitter {
     reply[optOffset++] = gwIPParts[2];
     reply[optOffset++] = gwIPParts[3];
 
-    const dnsServers = this.dnsServers.length > 0 ? this.dnsServers : ["8.8.8.8"];
+    const dnsServers =
+      this.dnsServers.length > 0 ? this.dnsServers : ["8.8.8.8"];
     const dnsEntries = dnsServers
       .map((server) => server.split(".").map(Number))
       .filter(
         (parts) =>
-          parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+          parts.length === 4 &&
+          parts.every(
+            (part) => Number.isInteger(part) && part >= 0 && part <= 255,
+          ),
       );
 
     if (dnsEntries.length === 0) {
@@ -1082,7 +1168,10 @@ export class NetworkStack extends EventEmitter {
 
     const ipPacket = Buffer.concat([ipHeader, udpPayload]);
 
-    const dstMac = flags & 0x8000 ? Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff]) : chaddr.subarray(0, 6);
+    const dstMac =
+      flags & 0x8000
+        ? Buffer.from([0xff, 0xff, 0xff, 0xff, 0xff, 0xff])
+        : chaddr.subarray(0, 6);
 
     const frame = Buffer.alloc(14 + ipPacket.length);
     dstMac.copy(frame, 0);
@@ -1152,7 +1241,10 @@ export class NetworkStack extends EventEmitter {
     }
 
     const inFlight = Math.max(0, session.mySeq - session.vmAck);
-    const maxInFlight = Math.max(0, Math.min(session.peerWindow, this.TCP_MAX_IN_FLIGHT_BYTES));
+    const maxInFlight = Math.max(
+      0,
+      Math.min(session.peerWindow, this.TCP_MAX_IN_FLIGHT_BYTES),
+    );
     if (inFlight < maxInFlight) {
       this.txFlowPaused.delete(key);
       if (!this.txQueuePaused.has(key)) {
@@ -1169,11 +1261,18 @@ export class NetworkStack extends EventEmitter {
 
     const MSS = 1460;
     let inFlight = Math.max(0, session.mySeq - session.vmAck);
-    const maxInFlight = Math.max(0, Math.min(session.peerWindow, this.TCP_MAX_IN_FLIGHT_BYTES));
+    const maxInFlight = Math.max(
+      0,
+      Math.min(session.peerWindow, this.TCP_MAX_IN_FLIGHT_BYTES),
+    );
 
     while (session.pendingOutbound.length > 0 && inFlight < maxInFlight) {
       const allowance = maxInFlight - inFlight;
-      const chunkSize = Math.min(MSS, session.pendingOutbound.length, allowance);
+      const chunkSize = Math.min(
+        MSS,
+        session.pendingOutbound.length,
+        allowance,
+      );
       if (chunkSize <= 0) {
         break;
       }
@@ -1189,7 +1288,7 @@ export class NetworkStack extends EventEmitter {
         session.mySeq,
         session.myAck,
         flags,
-        chunk
+        chunk,
       );
       session.mySeq += chunk.length;
       inFlight += chunk.length;
@@ -1204,7 +1303,7 @@ export class NetworkStack extends EventEmitter {
           session.dstPort,
           session.mySeq,
           session.myAck,
-          0x11
+          0x11,
         );
         session.mySeq++;
         session.state = "FIN_WAIT";
@@ -1232,7 +1331,7 @@ export class NetworkStack extends EventEmitter {
       session.dstPort,
       session.mySeq,
       session.myAck,
-      0x12
+      0x12,
     );
     session.mySeq++;
   }
@@ -1250,7 +1349,10 @@ export class NetworkStack extends EventEmitter {
       this.drainOutboundTcp(message.key, session);
     }
 
-    if (this.txQueueHighSize > this.TX_BUFFER_HIGH_WATER && !this.txQueuePaused.has(message.key)) {
+    if (
+      this.txQueueHighSize > this.TX_BUFFER_HIGH_WATER &&
+      !this.txQueuePaused.has(message.key)
+    ) {
       this.txQueuePaused.add(message.key);
       this.callbacks.onTcpPause({ key: message.key });
     }
@@ -1275,7 +1377,7 @@ export class NetworkStack extends EventEmitter {
       session.dstPort,
       session.mySeq,
       session.myAck,
-      0x04
+      0x04,
     );
     this.clearPauseState(message.key);
     this.natTable.delete(message.key);

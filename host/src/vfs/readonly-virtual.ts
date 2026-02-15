@@ -14,7 +14,10 @@ import { ERRNO, isWriteFlag, VirtualProviderClass } from "./utils";
  * - Rejects any write operation with `EROFS`
  * - Rejects `open(..., flags)` that imply writing with `EROFS`
  */
-export abstract class ReadonlyVirtualProvider extends VirtualProviderClass implements VirtualProvider {
+export abstract class ReadonlyVirtualProvider
+  extends VirtualProviderClass
+  implements VirtualProvider
+{
   get readonly() {
     return true;
   }
@@ -39,7 +42,11 @@ export abstract class ReadonlyVirtualProvider extends VirtualProviderClass imple
   }
 
   /** Sync open implementation for read-only use-cases */
-  protected abstract openReadonlySync(entryPath: string, flags: string, mode?: number): VirtualFileHandle;
+  protected abstract openReadonlySync(
+    entryPath: string,
+    flags: string,
+    mode?: number,
+  ): VirtualFileHandle;
 
   async stat(entryPath: string, options?: object) {
     return this.statSync(entryPath, options);
@@ -57,7 +64,10 @@ export abstract class ReadonlyVirtualProvider extends VirtualProviderClass imple
     return this.readdirSync(entryPath, options);
   }
 
-  abstract readdirSync(entryPath: string, options?: object): Array<string | fs.Dirent>;
+  abstract readdirSync(
+    entryPath: string,
+    options?: object,
+  ): Array<string | fs.Dirent>;
 
   async mkdir(entryPath: string, options?: object) {
     return this.mkdirSync(entryPath, options);

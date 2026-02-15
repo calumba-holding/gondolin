@@ -94,7 +94,10 @@ test("virtio-protocol: decodeMessage normalizes CBOR decoded values", () => {
   assert.ok(decoded["1"]);
   assert.ok(Buffer.isBuffer(decoded["1"]["2"]));
   assert.equal(decoded["1"]["2"].toString("hex"), "07");
-  assert.deepEqual(decoded["1"]["3"].map((b: Buffer) => b.toString("hex")), ["0809"]);
+  assert.deepEqual(
+    decoded["1"]["3"].map((b: Buffer) => b.toString("hex")),
+    ["0809"],
+  );
 });
 
 test("virtio-protocol: encodeFrame prefixes payload length and roundtrips", () => {

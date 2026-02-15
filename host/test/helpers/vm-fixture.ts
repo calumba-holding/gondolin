@@ -94,7 +94,7 @@ async function getEntry(key: string, options: VMOptions): Promise<VmEntry> {
 export async function withVm<T>(
   key: string,
   options: VMOptions,
-  fn: (vm: VM) => Promise<T>
+  fn: (vm: VM) => Promise<T>,
 ): Promise<T> {
   const entry = await getEntry(key, options);
   await entry.semaphore.acquire();
@@ -182,7 +182,7 @@ export async function closeAllVms(): Promise<void> {
           clearTimeout(timeout);
         }
       }
-    })
+    }),
   );
 }
 

@@ -28,6 +28,72 @@ export class HttpRequestBlockedError extends Error {
   }
 }
 
+export function parseHeaderLines(
+  lines: Iterable<string>,
+  options: {
+    /** how to handle duplicate headers */
+    merge: "comma";
+    /** reject multiple distinct Content-Length values */
+    strictContentLength?: boolean;
+  },
+): Record<string, string>;
+export function parseHeaderLines(
+  lines: Iterable<string>,
+  options?: {
+    /** how to handle duplicate headers */
+    merge?: "array";
+  },
+): Record<string, string | string[]>;
+export function parseHeaderLines(
+  lines: Iterable<string>,
+  options?: {
+    merge?: "comma" | "array";
+    strictContentLength?: boolean;
+  },
+): Record<string, string | string[]> {
+  const merge = options?.merge ?? "array";
+  const headers: Record<string, string | string[]> = {};
+
+  for (const line of lines) {
+    if (!line) continue;
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+
+    const key = line.slice(0, idx).trim().toLowerCase();
+    if (!key) continue;
+
+    const value = line.slice(idx + 1).trim();
+
+    if (merge === "comma") {
+      const prev = headers[key] as string | undefined;
+      if (prev !== undefined) {
+        if (options?.strictContentLength && key === "content-length") {
+          if (prev !== value) {
+            throw new Error("multiple content-length headers");
+          }
+          continue;
+        }
+        headers[key] = `${prev}, ${value}`;
+      } else {
+        headers[key] = value;
+      }
+      continue;
+    }
+
+    // merge === "array"
+    const prev = headers[key];
+    if (prev === undefined) {
+      headers[key] = value;
+    } else if (Array.isArray(prev)) {
+      prev.push(value);
+    } else {
+      headers[key] = [prev, value];
+    }
+  }
+
+  return headers;
+}
+
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",

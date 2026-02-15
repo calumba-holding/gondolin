@@ -95,7 +95,10 @@ test("dns: synthetic response returns loopback for localhost (A + AAAA)", () => 
     ttlSeconds: 60,
   });
   assert.equal(responseA.readUInt16BE(6), 1); // ANCOUNT
-  assert.deepEqual([...responseA.subarray(responseA.length - 4)], [127, 0, 0, 1]);
+  assert.deepEqual(
+    [...responseA.subarray(responseA.length - 4)],
+    [127, 0, 0, 1],
+  );
 
   const queryAAAA = parseDnsQuery(buildQueryAAAA("localhost", 0x2222));
   assert.ok(queryAAAA);
@@ -107,7 +110,7 @@ test("dns: synthetic response returns loopback for localhost (A + AAAA)", () => 
   assert.equal(responseAAAA.readUInt16BE(6), 1); // ANCOUNT
   assert.deepEqual(
     [...responseAAAA.subarray(responseAAAA.length - 16)],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
   );
 });
 

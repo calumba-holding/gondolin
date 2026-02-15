@@ -1,8 +1,8 @@
-'use strict';
+"use strict";
 
-import { fileURLToPath, pathToFileURL, URL } from 'node:url';
+import { fileURLToPath, pathToFileURL, URL } from "node:url";
 
-const Module = require('module') as typeof import('module') & {
+const Module = require("module") as typeof import("module") & {
   registerHooks?: (hooks: Record<string, unknown>) => void;
 };
 
@@ -10,15 +10,15 @@ const Module = require('module') as typeof import('module') & {
 
 // UV error code to name mapping
 const uvErrorNames: Record<number, [string, string]> = {
-  [-2]: ['ENOENT', 'no such file or directory'],
-  [-20]: ['ENOTDIR', 'not a directory'],
-  [-21]: ['EISDIR', 'is a directory'],
-  [-39]: ['ENOTEMPTY', 'directory not empty'],
-  [-9]: ['EBADF', 'bad file descriptor'],
-  [-17]: ['EEXIST', 'file already exists'],
-  [-30]: ['EROFS', 'read-only file system'],
-  [-22]: ['EINVAL', 'invalid argument'],
-  [-40]: ['ELOOP', 'too many symbolic links'],
+  [-2]: ["ENOENT", "no such file or directory"],
+  [-20]: ["ENOTDIR", "not a directory"],
+  [-21]: ["EISDIR", "is a directory"],
+  [-39]: ["ENOTEMPTY", "directory not empty"],
+  [-9]: ["EBADF", "bad file descriptor"],
+  [-17]: ["EEXIST", "file already exists"],
+  [-30]: ["EROFS", "read-only file system"],
+  [-22]: ["EINVAL", "invalid argument"],
+  [-40]: ["ELOOP", "too many symbolic links"],
 };
 
 class UVException extends Error {
@@ -28,14 +28,20 @@ class UVException extends Error {
   path?: string;
   dest?: string;
 
-  constructor({ errno, syscall, path, dest, message }: {
+  constructor({
+    errno,
+    syscall,
+    path,
+    dest,
+    message,
+  }: {
     errno: number;
     syscall: string;
     path?: string;
     dest?: string;
     message?: string;
   }) {
-    const [code, desc] = uvErrorNames[errno] || ['UNKNOWN', 'unknown error'];
+    const [code, desc] = uvErrorNames[errno] || ["UNKNOWN", "unknown error"];
     let msg = message || `${code}: ${desc}, ${syscall}`;
     if (path) msg += ` '${path}'`;
     if (dest) msg += ` -> '${dest}'`;
@@ -49,30 +55,32 @@ class UVException extends Error {
 }
 
 class ERR_METHOD_NOT_IMPLEMENTED extends Error {
-  code = 'ERR_METHOD_NOT_IMPLEMENTED';
+  code = "ERR_METHOD_NOT_IMPLEMENTED";
   constructor(method: string) {
     super(`Method '${method}' is not implemented`);
   }
 }
 
 class ERR_INVALID_STATE extends Error {
-  code = 'ERR_INVALID_STATE';
+  code = "ERR_INVALID_STATE";
   constructor(msg: string) {
     super(`Invalid state: ${msg}`);
   }
 }
 
 class ERR_INVALID_ARG_VALUE extends TypeError {
-  code = 'ERR_INVALID_ARG_VALUE';
+  code = "ERR_INVALID_ARG_VALUE";
   constructor(name: string, value: unknown, reason: string) {
     super(`The argument '${name}' ${reason}. Received ${String(value)}`);
   }
 }
 
 class ERR_INVALID_ARG_TYPE extends TypeError {
-  code = 'ERR_INVALID_ARG_TYPE';
+  code = "ERR_INVALID_ARG_TYPE";
   constructor(name: string, expected: string, actual: unknown) {
-    super(`The "${name}" argument must be of type ${expected}. Received ${typeof actual}`);
+    super(
+      `The "${name}" argument must be of type ${expected}. Received ${typeof actual}`,
+    );
   }
 }
 
@@ -116,7 +124,7 @@ class Stats {
     atimeMs: number,
     mtimeMs: number,
     ctimeMs: number,
-    birthtimeMs: number
+    birthtimeMs: number,
   ) {
     Object.assign(this, {
       dev,
@@ -184,7 +192,7 @@ function getStatsFromBinding(b: Float64Array) {
     b[10] * 1000 + b[11] / 1e6,
     b[12] * 1000 + b[13] / 1e6,
     b[14] * 1000 + b[15] / 1e6,
-    b[16] * 1000 + b[17] / 1e6
+    b[16] * 1000 + b[17] / 1e6,
   );
 }
 
@@ -231,7 +239,9 @@ class Dirent {
 }
 
 if (!Module.registerHooks) {
-  (Module as { registerHooks: (hooks: Record<string, unknown>) => unknown }).registerHooks = () => ({
+  (
+    Module as { registerHooks: (hooks: Record<string, unknown>) => unknown }
+  ).registerHooks = () => ({
     resolve: () => undefined,
     load: () => undefined,
   });
@@ -250,7 +260,7 @@ const internalUrl = {
 };
 
 const internalModules = {
-  'internal/errors': {
+  "internal/errors": {
     UVException,
     codes: {
       ERR_METHOD_NOT_IMPLEMENTED,
@@ -260,21 +270,24 @@ const internalModules = {
     },
   },
 
-  'internal/validators': {
+  "internal/validators": {
     validateBoolean(value: unknown, name: string) {
-      if (typeof value !== 'boolean') {
-        throw new ERR_INVALID_ARG_TYPE(name, 'boolean', value);
+      if (typeof value !== "boolean") {
+        throw new ERR_INVALID_ARG_TYPE(name, "boolean", value);
       }
     },
     validateObject(value: unknown, name: string) {
-      if (value === null || typeof value !== 'object') {
-        throw new ERR_INVALID_ARG_TYPE(name, 'object', value);
+      if (value === null || typeof value !== "object") {
+        throw new ERR_INVALID_ARG_TYPE(name, "object", value);
       }
     },
   },
 
-  'internal/util': {
-    kEmptyObject: Object.freeze({ __proto__: null }) as unknown as Record<string, never>,
+  "internal/util": {
+    kEmptyObject: Object.freeze({ __proto__: null }) as unknown as Record<
+      string,
+      never
+    >,
     emitExperimentalWarning() {},
     getLazy<T>(fn: () => T) {
       let v: T;
@@ -283,15 +296,15 @@ const internalModules = {
     },
   },
 
-  'internal/url': internalUrl,
+  "internal/url": internalUrl,
 
-  'internal/fs/utils': {
+  "internal/fs/utils": {
     Stats,
     getStatsFromBinding,
     Dirent,
   },
 
-  'internal/modules/cjs/loader': {
+  "internal/modules/cjs/loader": {
     Module,
   },
 };

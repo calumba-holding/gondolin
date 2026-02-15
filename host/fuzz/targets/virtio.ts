@@ -1,5 +1,11 @@
 import cbor from "cbor";
-import { FrameReader, MAX_FRAME, decodeMessage, encodeFrame, buildExecRequest } from "../../src/virtio-protocol";
+import {
+  FrameReader,
+  MAX_FRAME,
+  decodeMessage,
+  encodeFrame,
+  buildExecRequest,
+} from "../../src/virtio-protocol";
 import { XorShift32 } from "../rng";
 import type { FuzzTarget } from "./types";
 
@@ -22,9 +28,21 @@ export const virtioTarget: FuzzTarget = {
   defaultMaxLen: 64 * 1024,
   seeds: [
     // A valid frame with a well-formed exec request
-    encodeFrame(buildExecRequest(1, { cmd: "/bin/echo", argv: ["hello"], env: ["A=B"], stdin: false })),
+    encodeFrame(
+      buildExecRequest(1, {
+        cmd: "/bin/echo",
+        argv: ["hello"],
+        env: ["A=B"],
+        stdin: false,
+      }),
+    ),
     // A frame with an arbitrary CBOR value
-    encodeFrame({ v: 1, t: "tcp_open", id: 1, p: { host: "127.0.0.1", port: 80 } }),
+    encodeFrame({
+      v: 1,
+      t: "tcp_open",
+      id: 1,
+      p: { host: "127.0.0.1", port: 80 },
+    }),
     // Some random-but-valid CBOR
     encodeFrame(cbor.encode({ hello: "world", n: 1 })),
   ],

@@ -21,6 +21,7 @@ import {
 import {
   HttpReceiveBuffer,
   HttpRequestBlockedError,
+  parseHeaderLines,
   applyRedirectRequest,
   getCheckedDispatcher,
   getRedirectUrl,
@@ -362,12 +363,7 @@ export async function handleHttpDataWithWriter(
       if (head.method === "OPTIONS" && head.target === "*") {
         const version: "HTTP/1.0" | "HTTP/1.1" =
           head.version === "HTTP/1.0" ? "HTTP/1.0" : "HTTP/1.1";
-        respondWithError(
-          options.write,
-          501,
-          "Not Implemented",
-          version,
-        );
+        respondWithError(options.write, 501, "Not Implemented", version);
         httpSession.closed = true;
         options.finish();
         backend.flush();
@@ -441,18 +437,11 @@ export async function handleHttpDataWithWriter(
         );
       })();
 
-      const upgradeIsWebSocket = isWebSocketUpgradeRequest(
-        dummyRequest,
-      );
+      const upgradeIsWebSocket = isWebSocketUpgradeRequest(dummyRequest);
       if (hasUpgrade && !(backend.http.allowWebSockets && upgradeIsWebSocket)) {
         const version: "HTTP/1.0" | "HTTP/1.1" =
           head.version === "HTTP/1.0" ? "HTTP/1.0" : "HTTP/1.1";
-        respondWithError(
-          options.write,
-          501,
-          "Not Implemented",
-          version,
-        );
+        respondWithError(options.write, 501, "Not Implemented", version);
         httpSession.closed = true;
         options.finish();
         backend.flush();
@@ -698,10 +687,7 @@ export async function handleHttpDataWithWriter(
       // re-run request/ip policy checks against the final request.
       if (
         state.bufferRequestBody &&
-        !isSamePolicyRelevantRequestHead(
-          hookRequest,
-          state.hookRequest,
-        )
+        !isSamePolicyRelevantRequestHead(hookRequest, state.hookRequest)
       ) {
         let parsedUrl: URL;
         try {
@@ -928,12 +914,7 @@ export async function handleHttpDataWithWriter(
             );
           } else {
             backend.emit("error", error);
-            respondWithError(
-              safeWrite,
-              502,
-              "Bad Gateway",
-              httpVersion,
-            );
+            respondWithError(safeWrite, 502, "Bad Gateway", httpVersion);
           }
         } finally {
           releaseHttpConcurrency?.();
@@ -1072,12 +1053,7 @@ export async function handleHttpDataWithWriter(
         );
       } else {
         backend.emit("error", error);
-        respondWithError(
-          options.write,
-          502,
-          "Bad Gateway",
-          httpVersion,
-        );
+        respondWithError(options.write, 502, "Bad Gateway", httpVersion);
       }
     } finally {
       releaseHttpConcurrency?.();
@@ -1099,12 +1075,7 @@ export async function handleHttpDataWithWriter(
       if (backend.options.debug) {
         backend.emitDebug(`http blocked ${error.message}`);
       }
-      respondWithError(
-        options.write,
-        error.status,
-        error.statusText,
-        version,
-      );
+      respondWithError(options.write, error.status, error.statusText, version);
     } else {
       backend.emit("error", error);
       respondWithError(options.write, 400, "Bad Request", version);
@@ -1129,9 +1100,7 @@ export async function handleHttpDataWithWriter(
   }
 }
 
-function parseHttpHead(
-  buffer: Buffer,
-): {
+function parseHttpHead(buffer: Buffer): {
   method: string;
   target: string;
   version: string;
@@ -1171,27 +1140,10 @@ function parseHttpHead(
     throw new Error("invalid request line");
   }
 
-  const headers: Record<string, string> = {};
-  for (let i = 1; i < lines.length; i += 1) {
-    const line = lines[i];
-    const idx = line.indexOf(":");
-    if (idx === -1) continue;
-    const key = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim();
-    if (!key) continue;
-
-    if (headers[key]) {
-      if (key === "content-length") {
-        if (headers[key] !== value) {
-          throw new Error("multiple content-length headers");
-        }
-        continue;
-      }
-      headers[key] = `${headers[key]}, ${value}`;
-    } else {
-      headers[key] = value;
-    }
-  }
+  const headers = parseHeaderLines(lines.slice(1), {
+    merge: "comma",
+    strictContentLength: true,
+  });
 
   return {
     method,
@@ -1677,10 +1629,7 @@ export async function fetchHookRequestAndRespond(
     }
 
     const responseBody = responseBodyStream
-      ? await bufferResponseBodyWithLimit(
-          responseBodyStream,
-          maxResponseBytes,
-        )
+      ? await bufferResponseBodyWithLimit(responseBodyStream, maxResponseBytes)
       : Buffer.from(await response.arrayBuffer());
 
     if (responseBody.length > maxResponseBytes) {
@@ -2247,9 +2196,7 @@ async function applyRequestBodyHooks(
   return updated ?? cloned;
 }
 
-function headersToRecord(
-  headers: Headers,
-): HttpResponseHeaders {
+function headersToRecord(headers: Headers): HttpResponseHeaders {
   const record: HttpResponseHeaders = {};
 
   headers.forEach((value, key) => {

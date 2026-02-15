@@ -71,7 +71,9 @@ test("SandboxController: start emits state transitions and forwards logs", async
   const logs: Array<{ stream: string; chunk: string }> = [];
   const exits: any[] = [];
   controller.on("state", (s) => states.push(s));
-  controller.on("log", (chunk: any, stream: any) => logs.push({ stream, chunk }));
+  controller.on("log", (chunk: any, stream: any) =>
+    logs.push({ stream, chunk }),
+  );
   controller.on("exit", (e) => exits.push(e));
 
   await controller.start();
@@ -226,7 +228,8 @@ test("sandbox-controller: buildQemuArgs does not select -cpu host when using tcg
   // Note: cpu/accel selection is platform-specific, but "tcg" should always
   // avoid "-cpu host".
   const args = (__test as any).buildQemuArgs({
-    qemuPath: hostArch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64",
+    qemuPath:
+      hostArch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64",
     kernelPath: "/tmp/vmlinuz",
     initrdPath: "/tmp/initrd",
     memory: "256M",

@@ -23,7 +23,7 @@ function usage() {
   process.stderr.write(
     `usage: pnpm run fuzz -- <target> [--iters N] [--seed N] [--max-len N] [--repro FILE]\n\n` +
       `By default the fuzzer runs forever (like libFuzzer). Use --iters to run a bounded number of iterations.\n\n` +
-      `Available targets: ${names}\n`
+      `Available targets: ${names}\n`,
   );
 }
 
@@ -62,7 +62,7 @@ async function main() {
   const seed = Number.parseInt(parseArg(argv, "--seed") ?? "1", 10);
   const maxLen = Number.parseInt(
     parseArg(argv, "--max-len") ?? String(target.defaultMaxLen),
-    10
+    10,
   );
   const reproFile = parseArg(argv, "--repro");
 
@@ -71,7 +71,8 @@ async function main() {
     if (iters < 0) throw new Error("--iters must be >= 0");
   }
   if (!Number.isFinite(seed)) throw new Error("--seed must be finite");
-  if (!Number.isFinite(maxLen) || maxLen <= 0) throw new Error("--max-len must be > 0");
+  if (!Number.isFinite(maxLen) || maxLen <= 0)
+    throw new Error("--max-len must be > 0");
 
   const rng = new XorShift32(seed);
 
@@ -97,7 +98,9 @@ async function main() {
       }
     } catch (err: any) {
       const artifact = writeArtifact(target.name, input);
-      process.stderr.write(`\nFUZZ CRASH in target '${target.name}' at iter=${i} seed=${seed}\n`);
+      process.stderr.write(
+        `\nFUZZ CRASH in target '${target.name}' at iter=${i} seed=${seed}\n`,
+      );
       process.stderr.write(`artifact: ${artifact}\n`);
       process.stderr.write(`error: ${String(err?.stack ?? err)}\n`);
       process.exitCode = 1;
@@ -107,11 +110,11 @@ async function main() {
     if ((i + 1) % 5000 === 0) {
       if (iters === null || iters === 0) {
         process.stderr.write(
-          `target=${target.name} iter=${i + 1} corpus=${corpus.length} maxLen=${maxLen}\r`
+          `target=${target.name} iter=${i + 1} corpus=${corpus.length} maxLen=${maxLen}\r`,
         );
       } else {
         process.stderr.write(
-          `target=${target.name} iter=${i + 1}/${iters} corpus=${corpus.length} maxLen=${maxLen}\r`
+          `target=${target.name} iter=${i + 1}/${iters} corpus=${corpus.length} maxLen=${maxLen}\r`,
         );
       }
     }
@@ -119,7 +122,7 @@ async function main() {
 
   // Only reachable for bounded runs.
   process.stderr.write(
-    `\nDone. target=${target.name} iters=${String(iters)} corpus=${corpus.length}\n`
+    `\nDone. target=${target.name} iters=${String(iters)} corpus=${corpus.length}\n`,
   );
 }
 

@@ -17,7 +17,11 @@ test("resolveOutputMode only treats objects with write() as writable", () => {
   const writableLike = {
     write(_chunk: any) {},
   };
-  const resolvedWritable = resolveOutputMode(writableLike as any, undefined, "stdout");
+  const resolvedWritable = resolveOutputMode(
+    writableLike as any,
+    undefined,
+    "stdout",
+  );
   assert.equal(resolvedWritable.mode, "writable");
 });
 
@@ -138,7 +142,11 @@ test("ExecProcess.output() yields Buffer data even if setEncoding() is used on p
   session.stdoutPipe!.setEncoding("hex");
 
   const collected = (async () => {
-    const out: Array<{ stream: "stdout" | "stderr"; data: Buffer; text: string }> = [];
+    const out: Array<{
+      stream: "stdout" | "stderr";
+      data: Buffer;
+      text: string;
+    }> = [];
     for await (const chunk of proc.output()) {
       out.push(chunk);
     }
@@ -199,7 +207,10 @@ test("applyOutputChunk rejects exec on writable write() throw and switches to ig
   assert.equal((session.outputWriteError as any).code, "EPIPE");
 
   await assert.rejects(session.resultPromise, (err: any) => {
-    assert.match(String(err?.message ?? ""), /stdout output write failed: boom/);
+    assert.match(
+      String(err?.message ?? ""),
+      /stdout output write failed: boom/,
+    );
     assert.equal(err?.code, "EPIPE");
     assert.ok(err?.cause);
     assert.match(String(err.cause?.message ?? ""), /boom/);

@@ -23,7 +23,10 @@ export function cloneSyntheticStatfs(): VfsStatfs {
   return { ...SYNTHETIC_STATFS };
 }
 
-export async function delegateStatfsOrEnosys(provider: MaybeStatfsProvider, path: string): Promise<VfsStatfs> {
+export async function delegateStatfsOrEnosys(
+  provider: MaybeStatfsProvider,
+  path: string,
+): Promise<VfsStatfs> {
   if (typeof provider.statfs === "function") {
     return provider.statfs(path);
   }
@@ -33,7 +36,8 @@ export async function delegateStatfsOrEnosys(provider: MaybeStatfsProvider, path
 export function normalizeStatfs(raw: VfsStatfs): VfsStatfs {
   const U32_MAX = 0xffff_ffff;
   const safeUint = (value: unknown, fallback: number) => {
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return fallback;
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+      return fallback;
     return Math.min(Math.round(value), Number.MAX_SAFE_INTEGER);
   };
   const safeU32 = (value: unknown, fallback: number, min = 0) =>
@@ -56,7 +60,10 @@ export function isErrnoValue(error: unknown, errno: number): boolean {
   }
 
   const maybeError = error as NodeJS.ErrnoException;
-  if (typeof maybeError.errno === "number" && Math.abs(maybeError.errno) === errno) {
+  if (
+    typeof maybeError.errno === "number" &&
+    Math.abs(maybeError.errno) === errno
+  ) {
     return true;
   }
 

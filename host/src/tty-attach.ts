@@ -26,7 +26,7 @@ export function attachTty(
   stderr: NodeJS.WriteStream,
   stdoutPipe: Readable | null,
   stderrPipe: Readable | null,
-  hooks: AttachTtyHooks
+  hooks: AttachTtyHooks,
 ): { cleanup: () => void } {
   const stderrOut = stderr ?? stdout;
 

@@ -14,7 +14,7 @@ function checksum16(buf: Buffer): number {
   while (sum >> 16) {
     sum = (sum & 0xffff) + (sum >> 16);
   }
-  return (~sum) & 0xffff;
+  return ~sum & 0xffff;
 }
 
 function mac(bytes: number[]) {
@@ -126,7 +126,10 @@ function decodeFramesFromQemuData(data: Buffer): Buffer[] {
 
   while (offset + 4 <= data.length) {
     const len = data.readUInt32BE(offset);
-    assert.ok(offset + 4 + len <= data.length, "incomplete qemu frame in tx stream");
+    assert.ok(
+      offset + 4 + len <= data.length,
+      "incomplete qemu frame in tx stream",
+    );
     frames.push(data.subarray(offset + 4, offset + 4 + len));
     offset += 4 + len;
   }
@@ -145,11 +148,20 @@ function drainAllQemuTx(stack: NetworkStack): Buffer {
 
   while (stack.hasPendingData()) {
     iterations++;
-    assert.ok(iterations < maxIterations, "drainAllQemuTx: exceeded max iterations (no progress?)");
+    assert.ok(
+      iterations < maxIterations,
+      "drainAllQemuTx: exceeded max iterations (no progress?)",
+    );
 
     const chunk = stack.readFromNetwork(1 << 20);
-    assert.ok(chunk, "drainAllQemuTx: readFromNetwork returned null while hasPendingData() is true");
-    assert.ok(chunk.length > 0, "drainAllQemuTx: readFromNetwork returned empty buffer");
+    assert.ok(
+      chunk,
+      "drainAllQemuTx: readFromNetwork returned null while hasPendingData() is true",
+    );
+    assert.ok(
+      chunk.length > 0,
+      "drainAllQemuTx: readFromNetwork returned empty buffer",
+    );
 
     chunks.push(chunk);
   }
@@ -288,7 +300,11 @@ test("network-stack: ICMP echo request produces echo reply", () => {
     icmpEventCount++;
   });
 
-  const icmpReq = buildIcmpEchoRequest({ id: 0x1234, seq: 9, payload: Buffer.from("abc") });
+  const icmpReq = buildIcmpEchoRequest({
+    id: 0x1234,
+    seq: 9,
+    payload: Buffer.from("abc"),
+  });
   const ipPacket = buildIPv4Packet({
     srcIP: ip([192, 168, 127, 3]),
     dstIP: ip([8, 8, 8, 8]),
@@ -348,7 +364,11 @@ test("network-stack: writeToNetwork parses qemu framing (partial writes)", () =>
     },
   });
 
-  const udp = buildUdpDatagram({ srcPort: 1234, dstPort: 53, payload: Buffer.from([1, 2, 3]) });
+  const udp = buildUdpDatagram({
+    srcPort: 1234,
+    dstPort: 53,
+    payload: Buffer.from([1, 2, 3]),
+  });
   const ipPacket = buildIPv4Packet({
     srcIP: ip([192, 168, 127, 3]),
     dstIP: ip([8, 8, 8, 8]),
@@ -451,7 +471,11 @@ test("network-stack: DHCP does not advertise loopback dns servers", () => {
 
   assert.ok(dns, "expected DHCP DNS option");
   assert.equal(dns!.length, 4);
-  assert.deepEqual([...dns!], [8, 8, 8, 8], "expected loopback DNS to be filtered out");
+  assert.deepEqual(
+    [...dns!],
+    [8, 8, 8, 8],
+    "expected loopback DNS to be filtered out",
+  );
 });
 
 test("network-stack: DHCP discover -> OFFER and request -> ACK", () => {
@@ -517,7 +541,7 @@ test("network-stack: DHCP discover -> OFFER and request -> ACK", () => {
   assert.deepEqual(
     dhcpEvents.map((x) => x[0]),
     ["OFFER", "ACK"],
-    "expected OFFER then ACK events"
+    "expected OFFER then ACK events",
   );
 
   const tx = drainAllQemuTx(stack);
@@ -581,7 +605,7 @@ test("network-stack: TCP SYN creates session and handleTcpConnected emits SYN/AC
       flags: 0x02,
     }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(connects.length, 1);
@@ -649,12 +673,25 @@ test("network-stack: TCP flow classification (HTTP) emits onTcpSend and passes a
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([93, 184, 216, 34]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40001, dstPort: 80, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40001,
+      dstPort: 80,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   assert.ok(lastKey);
   stack.handleTcpConnected({ key: lastKey });
   drainAllQemuTx(stack); // drop SYN/ACK
 
-  const http = Buffer.from("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n", "ascii");
+  const http = Buffer.from(
+    "GET / HTTP/1.1\r\nHost: example.com\r\n\r\n",
+    "ascii",
+  );
   stack.handleTCP(
     buildTcpSegment({
       srcPort: 40001,
@@ -665,7 +702,7 @@ test("network-stack: TCP flow classification (HTTP) emits onTcpSend and passes a
       payload: http,
     }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(allowCalls.length, 1);
@@ -711,15 +748,35 @@ test("network-stack: TCP flow rejects CONNECT and unknown protocols", () => {
   const dstIP = ip([93, 184, 216, 34]);
 
   // CONNECT should be rejected
-  stack.handleTCP(buildTcpSegment({ srcPort: 40002, dstPort: 80, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40002,
+      dstPort: 80,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
-  const connectReq = Buffer.from("CONNECT example.com:443 HTTP/1.1\r\n\r\n", "ascii");
+  const connectReq = Buffer.from(
+    "CONNECT example.com:443 HTTP/1.1\r\n\r\n",
+    "ascii",
+  );
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40002, dstPort: 80, seq: 2, ack: 0, flags: 0x18, payload: connectReq }),
+    buildTcpSegment({
+      srcPort: 40002,
+      dstPort: 80,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: connectReq,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(closes.length, 1);
@@ -738,7 +795,17 @@ test("network-stack: TCP flow rejects CONNECT and unknown protocols", () => {
   closes.length = 0;
   denies.length = 0;
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40003, dstPort: 80, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40003,
+      dstPort: 80,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   const key2 = key;
   assert.ok(key2, "expected onTcpConnect to set key for unknown-protocol case");
   stack.handleTcpConnected({ key: key2 });
@@ -746,9 +813,16 @@ test("network-stack: TCP flow rejects CONNECT and unknown protocols", () => {
 
   const ssh = Buffer.from("SSH-2.0-OpenSSH_9.0\r\n", "ascii");
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40003, dstPort: 80, seq: 2, ack: 0, flags: 0x18, payload: ssh }),
+    buildTcpSegment({
+      srcPort: 40003,
+      dstPort: 80,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: ssh,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(closes.length, 1);
@@ -786,15 +860,32 @@ test("network-stack: SSH banner on port 22 is classified as ssh", () => {
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([198, 19, 0, 10]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40005, dstPort: 22, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40005,
+      dstPort: 22,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
   const banner = Buffer.from("SSH-2.0-OpenSSH_9.0\r\n", "ascii");
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40005, dstPort: 22, seq: 2, ack: 0, flags: 0x18, payload: banner }),
+    buildTcpSegment({
+      srcPort: 40005,
+      dstPort: 22,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: banner,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(flows.length, 1);
@@ -829,7 +920,17 @@ test("network-stack: duplicate TCP payload segments do not re-trigger onTcpSend"
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([198, 19, 0, 10]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40010, dstPort: 22, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40010,
+      dstPort: 22,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
@@ -837,18 +938,32 @@ test("network-stack: duplicate TCP payload segments do not re-trigger onTcpSend"
 
   // First delivery
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40010, dstPort: 22, seq: 2, ack: 0, flags: 0x18, payload: banner }),
+    buildTcpSegment({
+      srcPort: 40010,
+      dstPort: 22,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: banner,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
   drainAllQemuTx(stack);
   assert.equal(sends.length, 1);
 
   // Retransmit same payload with same seq
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40010, dstPort: 22, seq: 2, ack: 0, flags: 0x18, payload: banner }),
+    buildTcpSegment({
+      srcPort: 40010,
+      dstPort: 22,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: banner,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
   drainAllQemuTx(stack);
 
@@ -885,15 +1000,32 @@ test("network-stack: SSH banner on configured non-standard port is classified as
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([198, 19, 0, 10]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40105, dstPort: 443, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40105,
+      dstPort: 443,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
   const banner = Buffer.from("SSH-2.0-OpenSSH_9.0\r\n", "ascii");
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40105, dstPort: 443, seq: 2, ack: 0, flags: 0x18, payload: banner }),
+    buildTcpSegment({
+      srcPort: 40105,
+      dstPort: 443,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: banner,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(flows.length, 1);
@@ -929,16 +1061,33 @@ test("network-stack: TCP sniff-limit exceeded rejects incomplete HTTP request li
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([93, 184, 216, 34]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40004, dstPort: 80, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40004,
+      dstPort: 80,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
   // Create a payload that looks like it starts with an HTTP method, but never completes a request line.
   const payload = Buffer.from("GET /" + "a".repeat(8192), "ascii");
   stack.handleTCP(
-    buildTcpSegment({ srcPort: 40004, dstPort: 80, seq: 2, ack: 0, flags: 0x18, payload }),
+    buildTcpSegment({
+      srcPort: 40004,
+      dstPort: 80,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload,
+    }),
     srcIP,
-    dstIP
+    dstIP,
   );
 
   assert.equal(closes.length, 1);
@@ -973,13 +1122,36 @@ test("network-stack: allowTcpFlow policy can deny TLS flows", () => {
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([93, 184, 216, 34]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40005, dstPort: 443, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40005,
+      dstPort: 443,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
   // Minimal TLS ClientHello lookalike (record header is enough for classifier).
-  const tls = Buffer.from([0x16, 0x03, 0x01, 0x00, 0x2f, 0x01, 0x00, 0x00, 0x2b]);
-  stack.handleTCP(buildTcpSegment({ srcPort: 40005, dstPort: 443, seq: 2, ack: 0, flags: 0x18, payload: tls }), srcIP, dstIP);
+  const tls = Buffer.from([
+    0x16, 0x03, 0x01, 0x00, 0x2f, 0x01, 0x00, 0x00, 0x2b,
+  ]);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40005,
+      dstPort: 443,
+      seq: 2,
+      ack: 0,
+      flags: 0x18,
+      payload: tls,
+    }),
+    srcIP,
+    dstIP,
+  );
 
   assert.equal(closes.length, 1);
   assert.equal(denies.length, 1);
@@ -1011,7 +1183,17 @@ test("network-stack: TCP flow control pauses when tx buffer grows and resumes wh
   const srcIP = ip([192, 168, 127, 3]);
   const dstIP = ip([93, 184, 216, 34]);
 
-  stack.handleTCP(buildTcpSegment({ srcPort: 40006, dstPort: 80, seq: 1, ack: 0, flags: 0x02 }), srcIP, dstIP);
+  stack.handleTCP(
+    buildTcpSegment({
+      srcPort: 40006,
+      dstPort: 80,
+      seq: 1,
+      ack: 0,
+      flags: 0x02,
+    }),
+    srcIP,
+    dstIP,
+  );
   stack.handleTcpConnected({ key });
   drainAllQemuTx(stack);
 
@@ -1039,7 +1221,7 @@ test("network-stack: TCP flow control pauses when tx buffer grows and resumes wh
         flags: 0x10,
       }),
       srcIP,
-      dstIP
+      dstIP,
     );
     drainAllQemuTx(stack);
   }
@@ -1131,7 +1313,11 @@ test("network-stack: caps QEMU tx buffering and drops low-priority frames", () =
 
   // Generate many ICMP echo replies (low-priority) without draining QEMU.
   for (let i = 0; i < 200; i++) {
-    const req = buildIcmpEchoRequest({ id: 42, seq: i, payload: Buffer.alloc(32, 0xaa) });
+    const req = buildIcmpEchoRequest({
+      id: 42,
+      seq: i,
+      payload: Buffer.alloc(32, 0xaa),
+    });
     const packet = buildIPv4Packet({
       srcIP: ip([192, 168, 127, 3]),
       dstIP: ip([192, 168, 127, 1]),
@@ -1148,7 +1334,10 @@ test("network-stack: caps QEMU tx buffering and drops low-priority frames", () =
   }
 
   const tx = drainAllQemuTx(stack);
-  assert.ok(tx.length <= txQueueMaxBytes, `tx stream length (${tx.length}) exceeds cap (${txQueueMaxBytes})`);
+  assert.ok(
+    tx.length <= txQueueMaxBytes,
+    `tx stream length (${tx.length}) exceeds cap (${txQueueMaxBytes})`,
+  );
 
   const frames = decodeFramesFromQemuData(tx);
   assert.ok(frames.length < 200, "expected some frames to be dropped");
@@ -1180,7 +1369,11 @@ test("network-stack: high-priority TX evicts low-priority frames when capped", (
 
   // Fill the buffer with low-priority traffic.
   for (let i = 0; i < 100; i++) {
-    const req = buildIcmpEchoRequest({ id: 1, seq: i, payload: Buffer.alloc(16, 0xbb) });
+    const req = buildIcmpEchoRequest({
+      id: 1,
+      seq: i,
+      payload: Buffer.alloc(16, 0xbb),
+    });
     const packet = buildIPv4Packet({
       srcIP: ip([192, 168, 127, 3]),
       dstIP: ip([192, 168, 127, 1]),
@@ -1218,9 +1411,15 @@ test("network-stack: high-priority TX evicts low-priority frames when capped", (
   stack.writeToNetwork(qemuPacketFromFrame(arpFrame));
 
   const tx = drainAllQemuTx(stack);
-  assert.ok(tx.length <= txQueueMaxBytes, `tx stream length (${tx.length}) exceeds cap (${txQueueMaxBytes})`);
+  assert.ok(
+    tx.length <= txQueueMaxBytes,
+    `tx stream length (${tx.length}) exceeds cap (${txQueueMaxBytes})`,
+  );
 
   const frames = decodeFramesFromQemuData(tx);
   const etherTypes = frames.map((frame) => parseEthernet(frame).etherType);
-  assert.ok(etherTypes.includes(0x0806), "expected ARP reply to be present despite low-priority queue being full");
+  assert.ok(
+    etherTypes.includes(0x0806),
+    "expected ARP reply to be present despite low-priority queue being full",
+  );
 });

@@ -49,12 +49,18 @@ function createQcow2Overlay(opts: Qcow2CreateOptions): void {
       opts.backingPath,
       opts.path,
     ],
-    { stdio: "ignore" }
+    { stdio: "ignore" },
   );
 }
 
-export function createTempQcow2Overlay(backingPath: string, backingFormat: "raw" | "qcow2"): string {
-  const overlayPath = path.join(tmpDir(), `gondolin-disk-${randomUUID().slice(0, 8)}.qcow2`);
+export function createTempQcow2Overlay(
+  backingPath: string,
+  backingFormat: "raw" | "qcow2",
+): string {
+  const overlayPath = path.join(
+    tmpDir(),
+    `gondolin-disk-${randomUUID().slice(0, 8)}.qcow2`,
+  );
   createQcow2Overlay({ path: overlayPath, backingPath, backingFormat });
   return overlayPath;
 }
@@ -115,11 +121,11 @@ export function getQcow2BackingFilename(imagePath: string): string | null {
 export function rebaseQcow2InPlace(
   imagePath: string,
   backingPath: string,
-  backingFormat: "raw" | "qcow2"
+  backingFormat: "raw" | "qcow2",
 ): void {
   execFileSync(
     "qemu-img",
     ["rebase", "-u", "-F", backingFormat, "-b", backingPath, imagePath],
-    { stdio: "ignore" }
+    { stdio: "ignore" },
   );
 }

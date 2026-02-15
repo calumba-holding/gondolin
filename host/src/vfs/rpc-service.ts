@@ -68,7 +68,10 @@ export class FsRpcService {
     ops: {},
   };
 
-  constructor(private readonly provider: VirtualProvider, options: FsRpcServiceOptions = {}) {
+  constructor(
+    private readonly provider: VirtualProvider,
+    options: FsRpcServiceOptions = {},
+  ) {
     this.logger = options.logger;
     this.pathToIno.set("/", 1);
     this.inoToPaths.set(1, new Set(["/"]));
@@ -117,7 +120,7 @@ export class FsRpcService {
         } catch {
           // ignore
         }
-      })
+      }),
     );
   }
 
@@ -192,7 +195,9 @@ export class FsRpcService {
   private async handleReadlink(req: Record<string, unknown>) {
     const ino = requireUint(req.ino, "readlink", "ino");
     const entryPath = this.requirePath(ino, "readlink");
-    const provider = this.provider as { readlink?: (path: string, options?: object) => Promise<string> };
+    const provider = this.provider as {
+      readlink?: (path: string, options?: object) => Promise<string>;
+    };
     if (typeof provider.readlink !== "function") {
       throw createErrnoError(ERRNO.ENOSYS, "readlink", entryPath);
     }
@@ -205,14 +210,24 @@ export class FsRpcService {
     const ino = requireUint(req.ino, "readdir", "ino");
     const entryPath = this.requirePath(ino, "readdir");
     const offset = requireUint(req.offset ?? 0, "readdir", "offset");
-    const maxEntries = Math.max(1, Math.min(4096, requireUint(req.max_entries ?? 1024, "readdir", "max_entries")));
-    const entries = (await this.provider.readdir(entryPath, { withFileTypes: true })) as Array<
-      string | Dirent
-    >;
+    const maxEntries = Math.max(
+      1,
+      Math.min(
+        4096,
+        requireUint(req.max_entries ?? 1024, "readdir", "max_entries"),
+      ),
+    );
+    const entries = (await this.provider.readdir(entryPath, {
+      withFileTypes: true,
+    })) as Array<string | Dirent>;
     const start = Math.min(offset, entries.length);
 
     const responseEntries: Array<Record<string, unknown>> = [];
-    for (let index = start; index < entries.length && responseEntries.length < maxEntries; index += 1) {
+    for (
+      let index = start;
+      index < entries.length && responseEntries.length < maxEntries;
+      index += 1
+    ) {
       const entry = entries[index];
       const name = typeof entry === "string" ? entry : entry.name;
       if (!name || name.includes("/") || name.includes("\0")) {
@@ -229,7 +244,10 @@ export class FsRpcService {
       });
     }
 
-    const nextOffset = start + responseEntries.length >= entries.length ? 0 : start + responseEntries.length;
+    const nextOffset =
+      start + responseEntries.length >= entries.length
+        ? 0
+        : start + responseEntries.length;
 
     return {
       entries: responseEntries,
@@ -273,7 +291,7 @@ export class FsRpcService {
         buffer,
         total,
         size - total,
-        offset + total
+        offset + total,
       );
       if (bytesRead === 0) break;
       total += bytesRead;
@@ -293,7 +311,12 @@ export class FsRpcService {
     }
     const handle = this.getHandle(fh, "write");
     const position = handle.append ? null : offset;
-    const { bytesWritten } = await handle.handle.write(data, 0, data.length, position);
+    const { bytesWritten } = await handle.handle.write(
+      data,
+      0,
+      data.length,
+      position,
+    );
     this.metrics.bytesWritten += bytesWritten;
     return { size: bytesWritten };
   }
@@ -308,7 +331,11 @@ export class FsRpcService {
     const parentPath = this.requirePath(parentIno, "create");
     const entryPath = normalizePath(path.posix.join(parentPath, name));
     const append = (flags & LINUX_OPEN_FLAGS.O_APPEND) !== 0;
-    const handle = await this.provider.open(entryPath, openFlagsToString(flags, true), mode);
+    const handle = await this.provider.open(
+      entryPath,
+      openFlagsToString(flags, true),
+      mode,
+    );
     const stats = await handle.stat();
     const ino = this.ensureIno(entryPath);
     const fh = this.allocateHandle(handle, ino, entryPath, append);
@@ -390,9 +417,17 @@ export class FsRpcService {
   }
 
   private async handleRename(req: Record<string, unknown>) {
-    const oldParentIno = requireUint(req.old_parent_ino, "rename", "old_parent_ino");
+    const oldParentIno = requireUint(
+      req.old_parent_ino,
+      "rename",
+      "old_parent_ino",
+    );
     const oldName = requireString(req.old_name, "rename", "old_name");
-    const newParentIno = requireUint(req.new_parent_ino, "rename", "new_parent_ino");
+    const newParentIno = requireUint(
+      req.new_parent_ino,
+      "rename",
+      "new_parent_ino",
+    );
     const newName = requireString(req.new_name, "rename", "new_name");
     const flags = requireUint(req.flags ?? 0, "rename", "flags");
     if (flags !== 0) {
@@ -412,7 +447,11 @@ export class FsRpcService {
 
   private async handleLink(req: Record<string, unknown>) {
     const oldIno = requireUint(req.old_ino, "link", "old_ino");
-    const newParentIno = requireUint(req.new_parent_ino, "link", "new_parent_ino");
+    const newParentIno = requireUint(
+      req.new_parent_ino,
+      "link",
+      "new_parent_ino",
+    );
     const newName = requireString(req.new_name, "link", "new_name");
     validateName(newName, "link");
 
@@ -420,7 +459,9 @@ export class FsRpcService {
     const newParentPath = this.requirePath(newParentIno, "link");
     const newPath = normalizePath(path.posix.join(newParentPath, newName));
 
-    const provider = this.provider as { link?: (existingPath: string, newPath: string) => Promise<void> };
+    const provider = this.provider as {
+      link?: (existingPath: string, newPath: string) => Promise<void>;
+    };
     if (typeof provider.link !== "function") {
       throw createErrnoError(ERRNO.ENOSYS, "link", oldPath);
     }
@@ -461,7 +502,9 @@ export class FsRpcService {
   private async handleStatfs(req: Record<string, unknown>) {
     const ino = requireUint(req.ino, "statfs", "ino");
     const entryPath = this.requirePath(ino, "statfs");
-    const provider = this.provider as { statfs?: (path: string) => Promise<VfsStatfs> };
+    const provider = this.provider as {
+      statfs?: (path: string) => Promise<VfsStatfs>;
+    };
     if (typeof provider.statfs === "function") {
       try {
         const raw = await provider.statfs(entryPath);
@@ -477,7 +520,9 @@ export class FsRpcService {
   }
 
   private async truncatePath(entryPath: string, size: number) {
-    const provider = this.provider as { truncate?: (path: string, size: number) => Promise<void> };
+    const provider = this.provider as {
+      truncate?: (path: string, size: number) => Promise<void>;
+    };
     if (provider.truncate) {
       await provider.truncate(entryPath, size);
       return;
@@ -490,17 +535,23 @@ export class FsRpcService {
     }
   }
 
-  private record(op: string, err: number, res: Record<string, unknown> | undefined, durationMs: number) {
+  private record(
+    op: string,
+    err: number,
+    res: Record<string, unknown> | undefined,
+    durationMs: number,
+  ) {
     this.metrics.requests += 1;
     this.metrics.ops[op] = (this.metrics.ops[op] ?? 0) + 1;
     if (err !== 0) this.metrics.errors += 1;
 
     if (this.logger) {
-      const extra = op === "read" && Buffer.isBuffer(res?.data)
-        ? ` bytes=${res.data.length}`
-        : op === "write" && typeof res?.size === "number"
-          ? ` bytes=${res.size}`
-          : "";
+      const extra =
+        op === "read" && Buffer.isBuffer(res?.data)
+          ? ` bytes=${res.data.length}`
+          : op === "write" && typeof res?.size === "number"
+            ? ` bytes=${res.size}`
+            : "";
       this.logger(`op=${op} err=${err} dur=${durationMs}ms${extra}`);
     }
   }
@@ -535,7 +586,7 @@ export class FsRpcService {
     handle: VirtualFileHandle,
     ino: number,
     entryPath: string,
-    append: boolean
+    append: boolean,
   ) {
     const fh = this.nextHandle++;
     this.handles.set(fh, { handle, ino, path: entryPath, append });
@@ -569,18 +620,28 @@ export class FsRpcService {
   private renameMapping(oldPath: string, newPath: string) {
     const normalizedOld = normalizePath(oldPath);
     const normalizedNew = normalizePath(newPath);
-    const updates: Array<{ oldPath: string; newPath: string; ino: number }> = [];
+    const updates: Array<{ oldPath: string; newPath: string; ino: number }> =
+      [];
 
     for (const [pathKey, ino] of this.pathToIno.entries()) {
-      if (pathKey === normalizedOld || pathKey.startsWith(normalizedOld + "/")) {
+      if (
+        pathKey === normalizedOld ||
+        pathKey.startsWith(normalizedOld + "/")
+      ) {
         const suffix = pathKey.slice(normalizedOld.length);
-        updates.push({ oldPath: pathKey, newPath: normalizedNew + suffix, ino });
+        updates.push({
+          oldPath: pathKey,
+          newPath: normalizedNew + suffix,
+          ino,
+        });
       }
     }
 
     for (const [pathKey, ino] of this.pathToIno.entries()) {
-      const overlapsDestination = pathKey === normalizedNew || pathKey.startsWith(normalizedNew + "/");
-      const isMovedSource = pathKey === normalizedOld || pathKey.startsWith(normalizedOld + "/");
+      const overlapsDestination =
+        pathKey === normalizedNew || pathKey.startsWith(normalizedNew + "/");
+      const isMovedSource =
+        pathKey === normalizedOld || pathKey.startsWith(normalizedOld + "/");
       if (!overlapsDestination || isMovedSource) {
         continue;
       }
@@ -609,7 +670,10 @@ export class FsRpcService {
     }
 
     for (const handleEntry of this.handles.values()) {
-      if (handleEntry.path === normalizedOld || handleEntry.path.startsWith(normalizedOld + "/")) {
+      if (
+        handleEntry.path === normalizedOld ||
+        handleEntry.path.startsWith(normalizedOld + "/")
+      ) {
         const suffix = handleEntry.path.slice(normalizedOld.length);
         handleEntry.path = normalizedNew + suffix;
       }
@@ -635,7 +699,12 @@ function validateName(name: string, op: string) {
 }
 
 function requireUint(value: unknown, op: string, field: string) {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || !Number.isInteger(value)) {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    !Number.isInteger(value)
+  ) {
     throw createErrnoError(ERRNO.EINVAL, op, field);
   }
   return value;
@@ -670,7 +739,8 @@ function statsToAttr(ino: number, stats: Stats) {
 }
 
 function openFlagsToString(flags: number, forceCreate: boolean) {
-  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } = LINUX_OPEN_FLAGS;
+  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } =
+    LINUX_OPEN_FLAGS;
   const access = flags & (O_RDONLY | O_WRONLY | O_RDWR);
   const append = (flags & O_APPEND) !== 0;
   const trunc = (flags & O_TRUNC) !== 0;
@@ -690,7 +760,8 @@ function openFlagsToString(flags: number, forceCreate: boolean) {
 }
 
 function parseOpenFlagsForOpen(flags: number) {
-  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } = LINUX_OPEN_FLAGS;
+  const { O_RDONLY, O_WRONLY, O_RDWR, O_CREAT, O_TRUNC, O_APPEND } =
+    LINUX_OPEN_FLAGS;
   if ((flags & O_CREAT) !== 0) {
     throw createErrnoError(ERRNO.EINVAL, "open");
   }
@@ -709,20 +780,30 @@ function parseOpenFlagsForOpen(flags: number) {
   return { openFlags, truncate, append: appendEnabled };
 }
 
-type DirentLike = { name: string; isDirectory(): boolean; isSymbolicLink(): boolean };
+type DirentLike = {
+  name: string;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+};
 
 function isDirentLike(entry: unknown): entry is DirentLike {
   return Boolean(
     entry &&
-      typeof entry === "object" &&
-      "isDirectory" in entry &&
-      typeof (entry as { isDirectory: () => boolean }).isDirectory === "function" &&
-      "isSymbolicLink" in entry &&
-      typeof (entry as { isSymbolicLink: () => boolean }).isSymbolicLink === "function"
+    typeof entry === "object" &&
+    "isDirectory" in entry &&
+    typeof (entry as { isDirectory: () => boolean }).isDirectory ===
+      "function" &&
+    "isSymbolicLink" in entry &&
+    typeof (entry as { isSymbolicLink: () => boolean }).isSymbolicLink ===
+      "function",
   );
 }
 
-async function direntType(entry: string | Dirent, entryPath: string, provider: VirtualProvider) {
+async function direntType(
+  entry: string | Dirent,
+  entryPath: string,
+  provider: VirtualProvider,
+) {
   if (isDirentLike(entry)) {
     if (entry.isDirectory()) return DT_DIR;
     if (entry.isSymbolicLink()) return DT_LNK;
@@ -762,5 +843,10 @@ function normalizeError(error: unknown): ErrnoResult {
 }
 
 function isErrnoError(error: unknown): error is NodeJS.ErrnoException {
-  return Boolean(error && typeof error === "object" && "errno" in error && "message" in error);
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "errno" in error &&
+    "message" in error,
+  );
 }

@@ -9,6 +9,7 @@ import type { Duplex, Writable } from "stream";
 
 import type { VirtualProvider } from "./vfs/node";
 import type { SandboxServer } from "./sandbox-server";
+import { parseHeaderLines } from "./http-utils";
 
 const MAX_LISTENERS_FILE_BYTES = 64 * 1024;
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
@@ -393,30 +394,7 @@ function parseStatusLine(line: string): {
   return { statusCode, statusMessage };
 }
 
-function parseHeaders(raw: string): Record<string, string | string[]> {
-  const lines = raw.split("\r\n");
-  const headers: Record<string, string | string[]> = {};
-  for (const line of lines) {
-    if (!line) continue;
-    const idx = line.indexOf(":");
-    if (idx === -1) continue;
-    const key = line.slice(0, idx).trim().toLowerCase();
-    const value = line.slice(idx + 1).trim();
-    const prev = headers[key];
-    if (prev === undefined) {
-      headers[key] = value;
-    } else if (Array.isArray(prev)) {
-      prev.push(value);
-    } else {
-      headers[key] = [prev, value];
-    }
-  }
-  return headers;
-}
-
-async function readHttpHead(
-  stream: Duplex,
-): Promise<{
+async function readHttpHead(stream: Duplex): Promise<{
   statusCode: number;
   statusMessage: string;
   headers: Record<string, string | string[]>;
@@ -431,7 +409,7 @@ async function readHttpHead(
       const [statusLine, ...headerLines] = head.split("\r\n");
       if (!statusLine) throw new Error("missing status line");
       const { statusCode, statusMessage } = parseStatusLine(statusLine);
-      const headers = parseHeaders(headerLines.join("\r\n"));
+      const headers = parseHeaderLines(headerLines, { merge: "array" });
       return { statusCode, statusMessage, headers, rest };
     }
 

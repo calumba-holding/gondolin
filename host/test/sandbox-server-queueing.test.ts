@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SandboxServer, type ResolvedSandboxServerOptions } from "../src/sandbox-server";
+import {
+  SandboxServer,
+  type ResolvedSandboxServerOptions,
+} from "../src/sandbox-server";
 
 function makeResolvedOptions(
-  overrides: Partial<ResolvedSandboxServerOptions> = {}
+  overrides: Partial<ResolvedSandboxServerOptions> = {},
 ): ResolvedSandboxServerOptions {
   return {
     qemuPath: "/bin/false",
@@ -133,8 +136,10 @@ test("maxQueuedExecs caps total running plus queued exec pressure", () => {
   assert.ok((server as any).startedExecs.has(1));
   assert.ok(!(server as any).inflight.has(2));
   assert.ok(
-    b.captured.json.some((m) => m?.type === "error" && m?.id === 2 && m?.code === "queue_full"),
-    "expected queue_full once running+queued exec pressure reaches limit"
+    b.captured.json.some(
+      (m) => m?.type === "error" && m?.id === 2 && m?.code === "queue_full",
+    ),
+    "expected queue_full once running+queued exec pressure reaches limit",
   );
 });
 
@@ -160,11 +165,14 @@ test("started exec stdin replay keeps data buffered on queue pressure and retrie
 
   (server as any).handleStdin(a.client, stdinMessage(1, Buffer.from("hello")));
 
-  assert.ok((server as any).queuedStdin.has(1), "stdin should stay buffered after send failure");
+  assert.ok(
+    (server as any).queuedStdin.has(1),
+    "stdin should stay buffered after send failure",
+  );
   assert.ok((server as any).inflight.has(1), "exec should stay inflight");
   assert.ok(
     !a.captured.json.some((m) => m?.type === "error" && m?.id === 1),
-    "transient queue pressure must not fail a started exec"
+    "transient queue pressure must not fail a started exec",
   );
 
   failStdin = false;
@@ -173,9 +181,12 @@ test("started exec stdin replay keeps data buffered on queue pressure and retrie
   assert.equal(
     sent.filter((m) => m.t === "stdin_data" && m.id === 1).length,
     2,
-    "expected one failed send and one retry"
+    "expected one failed send and one retry",
   );
-  assert.ok(!((server as any).queuedStdin.has(1)), "stdin buffer should clear after retry");
+  assert.ok(
+    !(server as any).queuedStdin.has(1),
+    "stdin buffer should clear after retry",
+  );
 });
 
 test("stdin sending is gated by guest-advertised stdin credits", () => {
@@ -193,7 +204,10 @@ test("stdin sending is gated by guest-advertised stdin credits", () => {
 
   // No initial stdin credits yet, so stdin chunks must be buffered.
   (server as any).handleStdin(a.client, stdinMessage(10, Buffer.from("hello")));
-  assert.equal(sent.filter((m) => m.t === "stdin_data" && m.id === 10).length, 0);
+  assert.equal(
+    sent.filter((m) => m.t === "stdin_data" && m.id === 10).length,
+    0,
+  );
   assert.ok((server as any).queuedStdin.has(10));
 
   // Grant 2 bytes: should send a partial chunk.
@@ -229,7 +243,7 @@ test("stdin backpressure errors stay non-terminal and are not forwarded as clien
 
   assert.ok(
     !a.captured.json.some((m) => m?.type === "error" && m?.id === 3),
-    "non-terminal stdin backpressure must not be forwarded as a client error"
+    "non-terminal stdin backpressure must not be forwarded as a client error",
   );
   assert.ok((server as any).inflight.has(3));
   assert.ok((server as any).startedExecs.has(3));
@@ -238,18 +252,30 @@ test("stdin backpressure errors stay non-terminal and are not forwarded as clien
     v: 1,
     t: "error",
     id: 3,
-    p: { code: "stdin_chunk_too_large", message: "stdin chunk exceeds guest limit" },
+    p: {
+      code: "stdin_chunk_too_large",
+      message: "stdin chunk exceeds guest limit",
+    },
   });
 
   assert.ok(
     !a.captured.json.some((m) => m?.type === "error" && m?.id === 3),
-    "stdin_chunk_too_large must also stay advisory"
+    "stdin_chunk_too_large must also stay advisory",
   );
   assert.ok((server as any).inflight.has(3));
   assert.ok((server as any).startedExecs.has(3));
 
-  bridge.onMessage({ v: 1, t: "exec_output", id: 3, p: { stream: "stdout", data: Buffer.from("ok") } });
-  assert.equal(a.captured.binary.length, 1, "exec output should still be delivered after backpressure error");
+  bridge.onMessage({
+    v: 1,
+    t: "exec_output",
+    id: 3,
+    p: { stream: "stdout", data: Buffer.from("ok") },
+  });
+  assert.equal(
+    a.captured.binary.length,
+    1,
+    "exec output should still be delivered after backpressure error",
+  );
 
   bridge.onMessage({ v: 1, t: "exec_response", id: 3, p: { exit_code: 0 } });
   assert.ok(!(server as any).inflight.has(3));
@@ -257,7 +283,9 @@ test("stdin backpressure errors stay non-terminal and are not forwarded as clien
 });
 
 test("queued exec stdin is bounded while file operation blocks startup", () => {
-  const server = new SandboxServer(makeResolvedOptions({ maxQueuedStdinBytes: 10 }));
+  const server = new SandboxServer(
+    makeResolvedOptions({ maxQueuedStdinBytes: 10 }),
+  );
   const bridge = (server as any).bridge;
   bridge.send = () => true;
 
@@ -267,12 +295,18 @@ test("queued exec stdin is bounded while file operation blocks startup", () => {
   const a = makeClient();
   (server as any).handleExec(a.client, execMessage(2));
 
-  (server as any).handleStdin(a.client, stdinMessage(2, Buffer.from("12345678"))); // 8 bytes
+  (server as any).handleStdin(
+    a.client,
+    stdinMessage(2, Buffer.from("12345678")),
+  ); // 8 bytes
   (server as any).handleStdin(a.client, stdinMessage(2, Buffer.from("abcde"))); // +5 => overflow
 
   assert.ok(
-    a.captured.json.some((m) => m?.type === "error" && m?.id === 2 && m?.code === "payload_too_large"),
-    "expected payload_too_large on queued stdin overflow"
+    a.captured.json.some(
+      (m) =>
+        m?.type === "error" && m?.id === 2 && m?.code === "payload_too_large",
+    ),
+    "expected payload_too_large on queued stdin overflow",
   );
 
   assert.ok(!(server as any).inflight.has(2));
@@ -299,22 +333,36 @@ test("queued PTY resize survives send failure and retries after queued exec star
 
   const b = makeClient();
   (server as any).handleExec(b.client, execMessage(2, { pty: true }));
-  (server as any).handlePtyResize(b.client, { type: "pty_resize", id: 2, rows: 40, cols: 100 });
+  (server as any).handlePtyResize(b.client, {
+    type: "pty_resize",
+    id: 2,
+    rows: 40,
+    cols: 100,
+  });
 
-  assert.ok((server as any).queuedPtyResize.has(2), "resize should queue before exec starts");
+  assert.ok(
+    (server as any).queuedPtyResize.has(2),
+    "resize should queue before exec starts",
+  );
 
   // Release file operation and start queued exec.
   (server as any).activeFileOpId = null;
   (server as any).pumpExecQueue();
 
   assert.ok((server as any).startedExecs.has(2));
-  assert.ok((server as any).queuedPtyResize.has(2), "failed resize send should stay queued");
+  assert.ok(
+    (server as any).queuedPtyResize.has(2),
+    "failed resize send should stay queued",
+  );
 
   failResize = false;
   (server as any).flushQueuedPtyResize();
 
   assert.ok(sent.some((m) => m.t === "pty_resize" && m.id === 2));
-  assert.ok(!((server as any).queuedPtyResize.has(2)), "queued resize should clear after retry");
+  assert.ok(
+    !(server as any).queuedPtyResize.has(2),
+    "queued resize should clear after retry",
+  );
 });
 
 test("queued exec requests are bounded by maxQueuedExecs while file operation is active", () => {
@@ -333,15 +381,20 @@ test("queued exec requests are bounded by maxQueuedExecs while file operation is
 
   assert.ok((server as any).execQueue.some((e: any) => e.message.id === 1));
   assert.ok(
-    b.captured.json.some((m) => m?.type === "error" && m?.id === 2 && m?.code === "queue_full"),
-    "expected queue_full for second queued exec"
+    b.captured.json.some(
+      (m) => m?.type === "error" && m?.id === 2 && m?.code === "queue_full",
+    ),
+    "expected queue_full for second queued exec",
   );
   assert.ok(!(server as any).inflight.has(2));
 });
 
 test("total queued stdin cap applies across queued execs", () => {
   const server = new SandboxServer(
-    makeResolvedOptions({ maxQueuedStdinBytes: 100, maxTotalQueuedStdinBytes: 10 })
+    makeResolvedOptions({
+      maxQueuedStdinBytes: 100,
+      maxTotalQueuedStdinBytes: 10,
+    }),
   );
 
   const bridge = (server as any).bridge;
@@ -359,8 +412,11 @@ test("total queued stdin cap applies across queued execs", () => {
   (server as any).handleStdin(c.client, stdinMessage(3, Buffer.from("abcdef"))); // +6 => overflow
 
   assert.ok(
-    c.captured.json.some((m) => m?.type === "error" && m?.id === 3 && m?.code === "payload_too_large"),
-    "expected payload_too_large when global queued stdin is exceeded"
+    c.captured.json.some(
+      (m) =>
+        m?.type === "error" && m?.id === 3 && m?.code === "payload_too_large",
+    ),
+    "expected payload_too_large when global queued stdin is exceeded",
   );
 
   assert.ok((server as any).inflight.has(2));
@@ -388,8 +444,10 @@ test("disconnect keeps started exec ids reserved", () => {
   (server as any).handleExec(b.client, execMessage(11));
 
   assert.ok(
-    b.captured.json.some((m) => m?.type === "error" && m?.id === 11 && m?.code === "duplicate_id"),
-    "expected duplicate_id while orphaned guest exec is still active"
+    b.captured.json.some(
+      (m) => m?.type === "error" && m?.id === 11 && m?.code === "duplicate_id",
+    ),
+    "expected duplicate_id while orphaned guest exec is still active",
   );
 });
 
@@ -422,7 +480,10 @@ test("waitForExecIdle waits for guest-started exec lifecycle", async () => {
   const abort = new AbortController();
   abort.abort();
 
-  await assert.rejects((server as any).waitForExecIdle(abort.signal), /operation aborted/);
+  await assert.rejects(
+    (server as any).waitForExecIdle(abort.signal),
+    /operation aborted/,
+  );
 
   (server as any).startedExecs.delete(5);
   await (server as any).waitForExecIdle();

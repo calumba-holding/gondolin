@@ -18,7 +18,8 @@ export type MitmCa = {
 };
 
 export function getDefaultMitmCertDir() {
-  const cacheBase = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
+  const cacheBase =
+    process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
   return path.join(cacheBase, "gondolin", "ssl");
 }
 
@@ -100,7 +101,8 @@ export function isNonNegativeSerialNumberHex(serialNumber: string): boolean {
   if (!/^[0-9a-f]+$/.test(normalized)) {
     return false;
   }
-  const firstByteHex = normalized.length > 1 ? normalized.slice(0, 2) : `0${normalized}`;
+  const firstByteHex =
+    normalized.length > 1 ? normalized.slice(0, 2) : `0${normalized}`;
   return parseInt(firstByteHex, 16) < 0x80;
 }
 

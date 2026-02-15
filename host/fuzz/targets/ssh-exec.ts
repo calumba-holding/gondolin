@@ -19,7 +19,7 @@ export const sshExecTarget: FuzzTarget = {
   seeds: [
     Buffer.from("git-upload-pack 'org/repo.git'", "utf8"),
     Buffer.from("/usr/bin/git-receive-pack 'org/repo'", "utf8"),
-    Buffer.from("git-upload-pack \"org/repo.git\"", "utf8"),
+    Buffer.from('git-upload-pack "org/repo.git"', "utf8"),
   ],
   runOne(input: Buffer, _rng: XorShift32): boolean {
     const command = bytesToWeirdAscii(input);

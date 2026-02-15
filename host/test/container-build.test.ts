@@ -118,7 +118,9 @@ process.exit(0);
 
   fs.writeFileSync(dockerStubPath, dockerStub, { mode: 0o755 });
 
-  const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-assets-out-"));
+  const outputDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "gondolin-assets-out-"),
+  );
 
   const config: BuildConfig = {
     arch: "x86_64",

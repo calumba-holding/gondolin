@@ -111,14 +111,17 @@ function basenamePosix(value: string): string {
  * (2) only accepting conservative service/repo strings that contain no shell metacharacters/expansions.
  * If the command deviates from the canonical git form, we fail closed and return null.
  */
-export function getInfoFromSshExecRequest(req: SshExecRequest): GitSshExecInfo | null {
+export function getInfoFromSshExecRequest(
+  req: SshExecRequest,
+): GitSshExecInfo | null {
   const argv = splitSshExecCommand(req.command);
   if (!argv || argv.length !== 2) return null;
 
   const serviceArg = argv[0]!.trim();
   // Reject anything that could trigger shell expansion in the executable path.
   // (Some SSH servers execute the command via a shell.)
-  if (!/^(?:\/)?(?:[a-z0-9._+-]+\/)*git-[a-z0-9][a-z0-9-]*$/i.test(serviceArg)) return null;
+  if (!/^(?:\/)?(?:[a-z0-9._+-]+\/)*git-[a-z0-9][a-z0-9-]*$/i.test(serviceArg))
+    return null;
 
   const service = basenamePosix(serviceArg);
   if (!/^git-[a-z0-9][a-z0-9-]*$/i.test(service)) return null;
@@ -138,7 +141,9 @@ export function getInfoFromSshExecRequest(req: SshExecRequest): GitSshExecInfo |
 
   // Ensure the repo argument is safe even if the upstream SSH server executes via a shell.
   // We intentionally only accept the common "org/repo(.git)"-style path used by git-over-SSH.
-  if (!/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+(?:\.git)?$/i.test(repo)) {
+  if (
+    !/^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)+(?:\.git)?$/i.test(repo)
+  ) {
     return null;
   }
 

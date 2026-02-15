@@ -1,7 +1,7 @@
-'use strict';
+"use strict";
 
-import type { Dirent, Stats } from 'node:fs';
-import loader from './loader';
+import type { Dirent, Stats } from "node:fs";
+import loader from "./loader";
 
 /** Filesystem-level statistics returned by the optional `statfs` provider method. */
 export type VfsStatfs = {
@@ -24,14 +24,44 @@ export type VfsStatfs = {
 };
 
 export type VirtualFileHandle = {
-  read(buffer: Buffer, offset: number, length: number, position?: number | null): Promise<{ bytesRead: number; buffer: Buffer }>;
-  readSync(buffer: Buffer, offset: number, length: number, position?: number | null): number;
-  write(buffer: Buffer, offset: number, length: number, position?: number | null): Promise<{ bytesWritten: number; buffer: Buffer }>;
-  writeSync(buffer: Buffer, offset: number, length: number, position?: number | null): number;
-  readFile(options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<Buffer | string>;
-  readFileSync(options?: { encoding?: BufferEncoding } | BufferEncoding): Buffer | string;
-  writeFile(data: Buffer | string, options?: { encoding?: BufferEncoding }): Promise<void>;
-  writeFileSync(data: Buffer | string, options?: { encoding?: BufferEncoding }): void;
+  read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ): Promise<{ bytesRead: number; buffer: Buffer }>;
+  readSync(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ): number;
+  write(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ): Promise<{ bytesWritten: number; buffer: Buffer }>;
+  writeSync(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ): number;
+  readFile(
+    options?: { encoding?: BufferEncoding } | BufferEncoding,
+  ): Promise<Buffer | string>;
+  readFileSync(
+    options?: { encoding?: BufferEncoding } | BufferEncoding,
+  ): Buffer | string;
+  writeFile(
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding },
+  ): Promise<void>;
+  writeFileSync(
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding },
+  ): void;
   stat(options?: object): Promise<Stats>;
   statSync(options?: object): Stats;
   truncate(len?: number): Promise<void>;
@@ -67,12 +97,34 @@ export type VirtualProvider = {
   renameSync(oldPath: string, newPath: string): void;
   link?(existingPath: string, newPath: string): Promise<void>;
   linkSync?(existingPath: string, newPath: string): void;
-  readFile?(path: string, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<Buffer | string>;
-  readFileSync?(path: string, options?: { encoding?: BufferEncoding } | BufferEncoding): Buffer | string;
-  writeFile?(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): Promise<void>;
-  writeFileSync?(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): void;
-  appendFile?(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): Promise<void>;
-  appendFileSync?(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): void;
+  readFile?(
+    path: string,
+    options?: { encoding?: BufferEncoding } | BufferEncoding,
+  ): Promise<Buffer | string>;
+  readFileSync?(
+    path: string,
+    options?: { encoding?: BufferEncoding } | BufferEncoding,
+  ): Buffer | string;
+  writeFile?(
+    path: string,
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding; mode?: number },
+  ): Promise<void>;
+  writeFileSync?(
+    path: string,
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding; mode?: number },
+  ): void;
+  appendFile?(
+    path: string,
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding; mode?: number },
+  ): Promise<void>;
+  appendFileSync?(
+    path: string,
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding; mode?: number },
+  ): void;
   exists?(path: string): Promise<boolean>;
   existsSync?(path: string): boolean;
   copyFile?(src: string, dest: string, mode?: number): Promise<void>;
@@ -89,7 +141,11 @@ export type VirtualProvider = {
   statfs?(path: string): Promise<VfsStatfs>;
   watch?(path: string, options?: object): unknown;
   watchAsync?(path: string, options?: object): unknown;
-  watchFile?(path: string, options?: object, listener?: (...args: unknown[]) => void): unknown;
+  watchFile?(
+    path: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ): unknown;
   unwatchFile?(path: string, listener?: (...args: unknown[]) => void): void;
 };
 
@@ -125,9 +181,20 @@ export type VirtualFileSystem = {
   existsSync(path: string): boolean;
   statSync(path: string, options?: object): Stats;
   lstatSync(path: string, options?: object): Stats;
-  readFileSync(path: string, options?: { encoding?: BufferEncoding } | BufferEncoding): Buffer | string;
-  writeFileSync(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): void;
-  appendFileSync(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): void;
+  readFileSync(
+    path: string,
+    options?: { encoding?: BufferEncoding } | BufferEncoding,
+  ): Buffer | string;
+  writeFileSync(
+    path: string,
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding; mode?: number },
+  ): void;
+  appendFileSync(
+    path: string,
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding; mode?: number },
+  ): void;
   readdirSync(path: string, options?: object): Array<string | Dirent>;
   mkdirSync(path: string, options?: object): string | undefined;
   rmdirSync(path: string): void;
@@ -141,28 +208,107 @@ export type VirtualFileSystem = {
   internalModuleStat(path: string): number;
   openSync(path: string, flags?: string, mode?: number): number;
   closeSync(fd: number): void;
-  readSync(fd: number, buffer: Buffer, offset: number, length: number, position?: number | null): number;
+  readSync(
+    fd: number,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ): number;
   fstatSync(fd: number, options?: object): Stats;
-  readFile(path: string, options: object | string | ((err: Error | null, data?: Buffer | string) => void), callback?: (err: Error | null, data?: Buffer | string) => void): void;
-  writeFile(path: string, data: Buffer | string, options: object | ((err: Error | null) => void), callback?: (err: Error | null) => void): void;
-  stat(path: string, options: object | ((err: Error | null, stats?: Stats) => void), callback?: (err: Error | null, stats?: Stats) => void): void;
-  lstat(path: string, options: object | ((err: Error | null, stats?: Stats) => void), callback?: (err: Error | null, stats?: Stats) => void): void;
-  readdir(path: string, options: object | ((err: Error | null, entries?: Array<string | Dirent>) => void), callback?: (err: Error | null, entries?: Array<string | Dirent>) => void): void;
-  realpath(path: string, options: object | ((err: Error | null, resolved?: string) => void), callback?: (err: Error | null, resolved?: string) => void): void;
-  readlink(path: string, options: object | ((err: Error | null, target?: string) => void), callback?: (err: Error | null, target?: string) => void): void;
-  access(path: string, mode: number | ((err: Error | null) => void), callback?: (err: Error | null) => void): void;
-  open(path: string, flags: string | ((err: Error | null, fd?: number) => void), mode?: number | ((err: Error | null, fd?: number) => void), callback?: (err: Error | null, fd?: number) => void): void;
+  readFile(
+    path: string,
+    options:
+      | object
+      | string
+      | ((err: Error | null, data?: Buffer | string) => void),
+    callback?: (err: Error | null, data?: Buffer | string) => void,
+  ): void;
+  writeFile(
+    path: string,
+    data: Buffer | string,
+    options: object | ((err: Error | null) => void),
+    callback?: (err: Error | null) => void,
+  ): void;
+  stat(
+    path: string,
+    options: object | ((err: Error | null, stats?: Stats) => void),
+    callback?: (err: Error | null, stats?: Stats) => void,
+  ): void;
+  lstat(
+    path: string,
+    options: object | ((err: Error | null, stats?: Stats) => void),
+    callback?: (err: Error | null, stats?: Stats) => void,
+  ): void;
+  readdir(
+    path: string,
+    options:
+      | object
+      | ((err: Error | null, entries?: Array<string | Dirent>) => void),
+    callback?: (err: Error | null, entries?: Array<string | Dirent>) => void,
+  ): void;
+  realpath(
+    path: string,
+    options: object | ((err: Error | null, resolved?: string) => void),
+    callback?: (err: Error | null, resolved?: string) => void,
+  ): void;
+  readlink(
+    path: string,
+    options: object | ((err: Error | null, target?: string) => void),
+    callback?: (err: Error | null, target?: string) => void,
+  ): void;
+  access(
+    path: string,
+    mode: number | ((err: Error | null) => void),
+    callback?: (err: Error | null) => void,
+  ): void;
+  open(
+    path: string,
+    flags: string | ((err: Error | null, fd?: number) => void),
+    mode?: number | ((err: Error | null, fd?: number) => void),
+    callback?: (err: Error | null, fd?: number) => void,
+  ): void;
   close(fd: number, callback: (err: Error | null) => void): void;
-  read(fd: number, buffer: Buffer, offset: number, length: number, position: number | null, callback: (err: Error | null, bytesRead?: number, buffer?: Buffer) => void): void;
-  fstat(fd: number, options: object | ((err: Error | null, stats?: Stats) => void), callback?: (err: Error | null, stats?: Stats) => void): void;
+  read(
+    fd: number,
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position: number | null,
+    callback: (err: Error | null, bytesRead?: number, buffer?: Buffer) => void,
+  ): void;
+  fstat(
+    fd: number,
+    options: object | ((err: Error | null, stats?: Stats) => void),
+    callback?: (err: Error | null, stats?: Stats) => void,
+  ): void;
   createReadStream(path: string, options?: object): unknown;
-  watch(path: string, options?: object, listener?: (...args: unknown[]) => void): unknown;
-  watchFile(path: string, options?: object, listener?: (...args: unknown[]) => void): unknown;
+  watch(
+    path: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ): unknown;
+  watchFile(
+    path: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ): unknown;
   unwatchFile(path: string, listener?: (...args: unknown[]) => void): void;
   readonly promises: {
-    readFile(path: string, options?: { encoding?: BufferEncoding } | BufferEncoding): Promise<Buffer | string>;
-    writeFile(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): Promise<void>;
-    appendFile(path: string, data: Buffer | string, options?: { encoding?: BufferEncoding; mode?: number }): Promise<void>;
+    readFile(
+      path: string,
+      options?: { encoding?: BufferEncoding } | BufferEncoding,
+    ): Promise<Buffer | string>;
+    writeFile(
+      path: string,
+      data: Buffer | string,
+      options?: { encoding?: BufferEncoding; mode?: number },
+    ): Promise<void>;
+    appendFile(
+      path: string,
+      data: Buffer | string,
+      options?: { encoding?: BufferEncoding; mode?: number },
+    ): Promise<void>;
     stat(path: string, options?: object): Promise<Stats>;
     lstat(path: string, options?: object): Promise<Stats>;
     readdir(path: string, options?: object): Promise<Array<string | Dirent>>;
@@ -175,32 +321,58 @@ export type VirtualFileSystem = {
     readlink(path: string, options?: object): Promise<string>;
     symlink(target: string, path: string, type?: string): Promise<void>;
     access(path: string, mode?: number): Promise<void>;
-    watch(path: string, options?: object): AsyncIterable<{ eventType: string; filename: string }>;
+    watch(
+      path: string,
+      options?: object,
+    ): AsyncIterable<{ eventType: string; filename: string }>;
   };
 };
 
 export type VirtualProviderConstructor = new () => VirtualProvider;
 export type MemoryProviderConstructor = new () => MemoryProvider;
-export type RealFSProviderConstructor = new (rootPath: string) => RealFSProvider;
+export type RealFSProviderConstructor = new (
+  rootPath: string,
+) => RealFSProvider;
 export interface VirtualFileSystemConstructor {
   new (): VirtualFileSystem;
   new (options: VirtualFileSystemOptions): VirtualFileSystem;
-  new (provider: VirtualProvider, options?: VirtualFileSystemOptions): VirtualFileSystem;
+  new (
+    provider: VirtualProvider,
+    options?: VirtualFileSystemOptions,
+  ): VirtualFileSystem;
 }
 
-const { VirtualFileSystem } = loader.load('file_system') as { VirtualFileSystem: VirtualFileSystemConstructor };
-const { VirtualProvider } = loader.load('provider') as { VirtualProvider: VirtualProviderConstructor };
-const { MemoryProvider } = loader.loadProvider('memory') as { MemoryProvider: MemoryProviderConstructor };
-const { RealFSProvider } = loader.loadProvider('real') as { RealFSProvider: RealFSProviderConstructor };
+const { VirtualFileSystem } = loader.load("file_system") as {
+  VirtualFileSystem: VirtualFileSystemConstructor;
+};
+const { VirtualProvider } = loader.load("provider") as {
+  VirtualProvider: VirtualProviderConstructor;
+};
+const { MemoryProvider } = loader.loadProvider("memory") as {
+  MemoryProvider: MemoryProviderConstructor;
+};
+const { RealFSProvider } = loader.loadProvider("real") as {
+  RealFSProvider: RealFSProviderConstructor;
+};
 
 function isVirtualProvider(value: unknown): value is VirtualProvider {
-  return !!value && typeof value === 'object' && typeof (value as { openSync?: unknown }).openSync === 'function';
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as { openSync?: unknown }).openSync === "function"
+  );
 }
 
 function create(): VirtualFileSystem;
 function create(options: VirtualFileSystemOptions): VirtualFileSystem;
-function create(provider: VirtualProvider, options?: VirtualFileSystemOptions): VirtualFileSystem;
-function create(providerOrOptions?: VirtualProvider | VirtualFileSystemOptions, options?: VirtualFileSystemOptions) {
+function create(
+  provider: VirtualProvider,
+  options?: VirtualFileSystemOptions,
+): VirtualFileSystem;
+function create(
+  providerOrOptions?: VirtualProvider | VirtualFileSystemOptions,
+  options?: VirtualFileSystemOptions,
+) {
   if (isVirtualProvider(providerOrOptions)) {
     return new VirtualFileSystem(providerOrOptions, options);
   }
@@ -210,4 +382,10 @@ function create(providerOrOptions?: VirtualProvider | VirtualFileSystemOptions, 
   return new VirtualFileSystem(providerOrOptions);
 }
 
-export { create, VirtualFileSystem, VirtualProvider, MemoryProvider, RealFSProvider };
+export {
+  create,
+  VirtualFileSystem,
+  VirtualProvider,
+  MemoryProvider,
+  RealFSProvider,
+};

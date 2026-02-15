@@ -3,9 +3,10 @@ import net from "net";
 import os from "os";
 import path from "path";
 import { randomUUID } from "crypto";
-import { execFile } from "child_process";
 import { EventEmitter } from "events";
 import { Duplex, PassThrough, Readable } from "stream";
+
+import { getHostNodeArchCached } from "./host-arch";
 
 import {
   FrameReader,
@@ -412,7 +413,7 @@ export function resolveSandboxServerOptions(
   );
   const defaultNetMac = "02:00:00:00:00:01";
 
-  const hostArch = detectHostArch();
+  const hostArch = getHostNodeArchCached();
   const defaultQemu =
     hostArch === "arm64" ? "qemu-system-aarch64" : "qemu-system-x86_64";
   const defaultMemory = "1G";
@@ -527,49 +528,6 @@ export async function resolveSandboxServerOptionsAsync(
   const assets = await ensureGuestAssets();
   return resolveSandboxServerOptions(options, assets);
 }
-
-let cachedHostArch: string | null = null;
-
-function detectHostArch(): string {
-  if (cachedHostArch !== null) return cachedHostArch;
-
-  // Synchronous fallback for first call - will be replaced by async result
-  if (process.arch === "arm64") {
-    cachedHostArch = "arm64";
-    return cachedHostArch;
-  }
-
-  // For macOS x64, we need async detection for Rosetta - return x64 for now
-  // and let the async detection update it if needed
-  cachedHostArch = process.arch;
-  return cachedHostArch;
-}
-
-// Async detection that runs at module load
-async function detectHostArchAsync(): Promise<string> {
-  if (process.arch === "arm64") return "arm64";
-
-  if (process.platform === "darwin" && process.arch === "x64") {
-    try {
-      const result = await new Promise<string>((resolve, reject) => {
-        execFile("sysctl", ["-n", "hw.optional.arm64"], (err, stdout) => {
-          if (err) reject(err);
-          else resolve(stdout.trim());
-        });
-      });
-      if (result === "1") return "arm64";
-    } catch {
-      // ignore
-    }
-  }
-
-  return process.arch;
-}
-
-// Start async detection immediately and cache result
-detectHostArchAsync().then((arch) => {
-  cachedHostArch = arch;
-});
 
 class VirtioBridge {
   private socket: net.Socket | null = null;
@@ -1158,7 +1116,7 @@ export class SandboxServer extends EventEmitter {
         : new SandboxVfsProvider(this.options.vfsProvider)
       : null;
 
-    const hostArch = detectHostArch();
+    const hostArch = getHostNodeArchCached();
     const consoleDevice = hostArch === "arm64" ? "ttyAMA0" : "ttyS0";
 
     const baseAppend = (

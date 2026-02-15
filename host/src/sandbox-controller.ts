@@ -317,7 +317,7 @@ function buildQemuArgs(config: SandboxConfig) {
 
     args.push(
       "-drive",
-      `file=${config.rootDiskPath},format=${format},if=none,id=drive0${snapshot ? ",snapshot=on" : ""}`
+      `file=${config.rootDiskPath},format=${format},if=none,id=drive0${snapshot ? ",snapshot=on" : ""}`,
     );
     // microvm has no PCI bus; use virtio-blk-device (MMIO) instead
     const blkDevice =
@@ -364,43 +364,43 @@ function buildQemuArgs(config: SandboxConfig) {
   args.push("-device", `${rngDev},rng=rng0`);
   args.push(
     "-chardev",
-    `socket,id=virtiocon0,path=${config.virtioSocketPath},server=off`
+    `socket,id=virtiocon0,path=${config.virtioSocketPath},server=off`,
   );
   args.push(
     "-chardev",
-    `socket,id=virtiofs0,path=${config.virtioFsSocketPath},server=off`
+    `socket,id=virtiofs0,path=${config.virtioFsSocketPath},server=off`,
   );
   args.push(
     "-chardev",
-    `socket,id=virtiossh0,path=${config.virtioSshSocketPath},server=off`
+    `socket,id=virtiossh0,path=${config.virtioSshSocketPath},server=off`,
   );
   args.push(
     "-chardev",
-    `socket,id=virtioingress0,path=${config.virtioIngressSocketPath},server=off`
+    `socket,id=virtioingress0,path=${config.virtioIngressSocketPath},server=off`,
   );
 
   args.push("-device", `${serialDev},id=virtio-serial0`);
   args.push(
     "-device",
-    "virtserialport,chardev=virtiocon0,name=virtio-port,bus=virtio-serial0.0"
+    "virtserialport,chardev=virtiocon0,name=virtio-port,bus=virtio-serial0.0",
   );
   args.push(
     "-device",
-    "virtserialport,chardev=virtiofs0,name=virtio-fs,bus=virtio-serial0.0"
+    "virtserialport,chardev=virtiofs0,name=virtio-fs,bus=virtio-serial0.0",
   );
   args.push(
     "-device",
-    "virtserialport,chardev=virtiossh0,name=virtio-ssh,bus=virtio-serial0.0"
+    "virtserialport,chardev=virtiossh0,name=virtio-ssh,bus=virtio-serial0.0",
   );
   args.push(
     "-device",
-    "virtserialport,chardev=virtioingress0,name=virtio-ingress,bus=virtio-serial0.0"
+    "virtserialport,chardev=virtioingress0,name=virtio-ingress,bus=virtio-serial0.0",
   );
 
   if (config.netSocketPath) {
     args.push(
       "-netdev",
-      `stream,id=net0,server=off,addr.type=unix,addr.path=${config.netSocketPath}`
+      `stream,id=net0,server=off,addr.type=unix,addr.path=${config.netSocketPath}`,
     );
     const mac = config.netMac ?? "02:00:00:00:00:01";
     args.push("-device", `${netDev},netdev=net0,mac=${mac}`);

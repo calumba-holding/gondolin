@@ -1,4 +1,4 @@
-import net from "node:net";
+import { parseIPv4Bytes, parseIPv6Bytes } from "./ip-utils";
 
 /** DNS record type A */
 export const DNS_TYPE_A = 1;
@@ -42,7 +42,10 @@ export function isProbablyDnsPacket(packet: Buffer): boolean {
   return packet.length >= 12;
 }
 
-function parseName(packet: Buffer, offset: number): { name: string; nextOffset: number } | null {
+function parseName(
+  packet: Buffer,
+  offset: number,
+): { name: string; nextOffset: number } | null {
   const labels: string[] = [];
   let off = offset;
   let seen = 0;
@@ -127,74 +130,12 @@ export function parseDnsQuery(packet: Buffer): ParsedDnsQuery | null {
   // For synthetic responses we only ever answer the first question.
   // Preserve the exact wire bytes of that first question and always respond with QDCOUNT=1.
   const questionSection = packet.subarray(12, firstQuestionEnd);
-  return { id, flags, questionSection: Buffer.from(questionSection), firstQuestion };
-}
-
-function parseIPv4(ip: string): Buffer | null {
-  const parts = ip.split(".");
-  if (parts.length !== 4) return null;
-  const bytes = parts.map((p) => Number(p));
-  if (!bytes.every((b) => Number.isInteger(b) && b >= 0 && b <= 255)) return null;
-  return Buffer.from(bytes);
-}
-
-function parseIPv6(ip: string): Buffer | null {
-  // Very small IPv6 parser: supports :: compression and embedded IPv4.
-  if (net.isIP(ip) !== 6) return null;
-
-  // Split around ::
-  const [head, tail] = ip.split("::");
-  const headParts = head ? head.split(":").filter(Boolean) : [];
-  const tailParts = tail !== undefined ? tail.split(":").filter(Boolean) : [];
-
-  const parts: number[] = [];
-  const pushHextet = (s: string) => {
-    if (s.includes(".")) {
-      const v4 = parseIPv4(s);
-      if (!v4) return false;
-      parts.push(v4.readUInt16BE(0));
-      parts.push(v4.readUInt16BE(2));
-      return true;
-    }
-    const n = parseInt(s, 16);
-    if (!Number.isFinite(n) || n < 0 || n > 0xffff) return false;
-    parts.push(n);
-    return true;
+  return {
+    id,
+    flags,
+    questionSection: Buffer.from(questionSection),
+    firstQuestion,
   };
-
-  for (const p of headParts) {
-    if (!pushHextet(p)) return null;
-  }
-
-  const tailHextets: number[] = [];
-  for (const p of tailParts) {
-    if (p.includes(".")) {
-      const v4 = parseIPv4(p);
-      if (!v4) return null;
-      tailHextets.push(v4.readUInt16BE(0));
-      tailHextets.push(v4.readUInt16BE(2));
-    } else {
-      const n = parseInt(p, 16);
-      if (!Number.isFinite(n) || n < 0 || n > 0xffff) return null;
-      tailHextets.push(n);
-    }
-  }
-
-  if (tail !== undefined) {
-    const missing = 8 - (parts.length + tailHextets.length);
-    if (missing < 0) return null;
-    for (let i = 0; i < missing; i++) parts.push(0);
-    parts.push(...tailHextets);
-  }
-
-  if (tail === undefined && parts.length !== 8) return null;
-  if (parts.length !== 8) return null;
-
-  const buf = Buffer.alloc(16);
-  for (let i = 0; i < 8; i++) {
-    buf.writeUInt16BE(parts[i]!, i * 2);
-  }
-  return buf;
 }
 
 /** RFC 6761 localhost name match */
@@ -203,15 +144,22 @@ export function isLocalhostDnsName(name: string): boolean {
   return n === "localhost" || n.endsWith(".localhost");
 }
 
-export function buildSyntheticDnsResponse(query: ParsedDnsQuery, options: SyntheticDnsResponseOptions): Buffer {
+export function buildSyntheticDnsResponse(
+  query: ParsedDnsQuery,
+  options: SyntheticDnsResponseOptions,
+): Buffer {
   // Copy RD bit from request, set QR + RA.
   const RD = query.flags & 0x0100;
   const flags = 0x8000 | RD | 0x0080; // QR=1, RD=?, RA=1
 
   const question = query.firstQuestion;
 
-  const effectiveIpv4 = isLocalhostDnsName(question.name) ? "127.0.0.1" : options.ipv4;
-  const effectiveIpv6 = isLocalhostDnsName(question.name) ? "::1" : options.ipv6;
+  const effectiveIpv4 = isLocalhostDnsName(question.name)
+    ? "127.0.0.1"
+    : options.ipv4;
+  const effectiveIpv6 = isLocalhostDnsName(question.name)
+    ? "::1"
+    : options.ipv6;
 
   let answerType: number | null = null;
   let rdata: Buffer | null = null;
@@ -219,10 +167,10 @@ export function buildSyntheticDnsResponse(query: ParsedDnsQuery, options: Synthe
   if (question.qclass === DNS_CLASS_IN) {
     if (question.type === DNS_TYPE_A) {
       answerType = DNS_TYPE_A;
-      rdata = parseIPv4(effectiveIpv4);
+      rdata = parseIPv4Bytes(effectiveIpv4);
     } else if (question.type === DNS_TYPE_AAAA) {
       answerType = DNS_TYPE_AAAA;
-      rdata = parseIPv6(effectiveIpv6);
+      rdata = parseIPv6Bytes(effectiveIpv6);
     }
   }
 

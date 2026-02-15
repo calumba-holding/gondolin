@@ -9,7 +9,12 @@ export type DebugFlag = "net" | "exec" | "vfs" | "protocol";
  */
 export type DebugConfig = boolean | ReadonlyArray<DebugFlag>;
 
-const ALL_DEBUG_FLAGS: ReadonlyArray<DebugFlag> = ["net", "exec", "vfs", "protocol"];
+const ALL_DEBUG_FLAGS: ReadonlyArray<DebugFlag> = [
+  "net",
+  "exec",
+  "vfs",
+  "protocol",
+];
 
 /**
  * Component identifier passed to debug log callbacks
@@ -37,7 +42,9 @@ export function stripTrailingNewline(value: string) {
   return value;
 }
 
-export function parseDebugEnv(value: string | undefined = process.env.GONDOLIN_DEBUG) {
+export function parseDebugEnv(
+  value: string | undefined = process.env.GONDOLIN_DEBUG,
+) {
   const flags = new Set<DebugFlag>();
   if (!value) return flags;
 
@@ -52,7 +59,12 @@ export function parseDebugEnv(value: string | undefined = process.env.GONDOLIN_D
     }
 
     const flag = raw === "fs" ? "vfs" : raw;
-    if (flag === "net" || flag === "exec" || flag === "vfs" || flag === "protocol") {
+    if (
+      flag === "net" ||
+      flag === "exec" ||
+      flag === "vfs" ||
+      flag === "protocol"
+    ) {
       flags.add(flag);
     }
   }
@@ -60,7 +72,10 @@ export function parseDebugEnv(value: string | undefined = process.env.GONDOLIN_D
   return flags;
 }
 
-export function resolveDebugFlags(config: DebugConfig | undefined, envFlags = parseDebugEnv()) {
+export function resolveDebugFlags(
+  config: DebugConfig | undefined,
+  envFlags = parseDebugEnv(),
+) {
   if (config === undefined) {
     return envFlags;
   }
@@ -73,7 +88,12 @@ export function resolveDebugFlags(config: DebugConfig | undefined, envFlags = pa
 
   const out = new Set<DebugFlag>();
   for (const flag of config) {
-    if (flag === "net" || flag === "exec" || flag === "vfs" || flag === "protocol") {
+    if (
+      flag === "net" ||
+      flag === "exec" ||
+      flag === "vfs" ||
+      flag === "protocol"
+    ) {
       out.add(flag);
     }
   }

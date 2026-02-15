@@ -11,7 +11,9 @@ import { VirtualProvider as VirtualProviderBase } from "./node";
  * type is a constructor signature, which is not directly extendable. Casting it
  * once here keeps custom providers readable.
  */
-export const VirtualProviderClass = VirtualProviderBase as unknown as { new (...args: any[]): any };
+export const VirtualProviderClass = VirtualProviderBase as unknown as {
+  new (...args: any[]): any;
+};
 
 /** system errno constants */
 export const ERRNO = os.constants.errno;
@@ -108,5 +110,7 @@ export function createVirtualDirStats() {
 
 export function formatVirtualEntries(entries: string[], withTypes: boolean) {
   if (!withTypes) return entries;
-  return entries.map((entry) => new VirtualDirent(entry) as unknown as fs.Dirent);
+  return entries.map(
+    (entry) => new VirtualDirent(entry) as unknown as fs.Dirent,
+  );
 }

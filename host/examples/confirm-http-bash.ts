@@ -55,7 +55,7 @@ class ShellTerminalAttach {
     proc: ExecProcess,
     stdin: NodeJS.ReadStream = process.stdin,
     stdout: NodeJS.WriteStream = process.stdout,
-    stderr: NodeJS.WriteStream = process.stderr
+    stderr: NodeJS.WriteStream = process.stderr,
   ) {
     this.proc = proc;
     this.stdin = stdin;
@@ -146,9 +146,12 @@ class ShellTerminalAttach {
 
     this.pause();
     try {
-      const rl = readline.createInterface({ input: this.stdin, output: this.stderr });
+      const rl = readline.createInterface({
+        input: this.stdin,
+        output: this.stderr,
+      });
       const answer = await new Promise<string>((resolve) =>
-        rl.question(`${question} ${choices} `, resolve)
+        rl.question(`${question} ${choices} `, resolve),
       );
       rl.close();
       return answer.trim().toLowerCase();
@@ -178,7 +181,7 @@ function wildcardFor(hostname: string): string | null {
 
 async function confirmWithNativePopup(
   message: string,
-  wildcardLabel: string | null
+  wildcardLabel: string | null,
 ): Promise<Decision | null> {
   const buttons = wildcardLabel
     ? `{"Deny", "${wildcardLabel}", "Allow"}`
@@ -194,11 +197,16 @@ async function confirmWithNativePopup(
         `  display dialog msg with title "Gondolin" buttons ${buttons} default button ${defaultButton} cancel button "Deny"`,
         "end run",
       ].join("\n");
-      const { stdout } = await execFileAsync("osascript", ["-e", script, "--", message], {
-        timeout: 60_000,
-      });
+      const { stdout } = await execFileAsync(
+        "osascript",
+        ["-e", script, "--", message],
+        {
+          timeout: 60_000,
+        },
+      );
       if (stdout.includes("button returned:Allow")) return "host";
-      if (wildcardLabel && stdout.includes(`button returned:${wildcardLabel}`)) return "wildcard";
+      if (wildcardLabel && stdout.includes(`button returned:${wildcardLabel}`))
+        return "wildcard";
       return "deny";
     } catch (err: any) {
       // osascript uses exit code 1 when the user hits the cancel button.
@@ -222,7 +230,7 @@ async function confirmWithNativePopup(
           "--column=Action",
           ...choices,
         ],
-        { timeout: 60_000 }
+        { timeout: 60_000 },
       );
       const picked = stdout.trim();
       if (picked.startsWith("Allow this")) return "host";
@@ -233,9 +241,13 @@ async function confirmWithNativePopup(
     }
 
     try {
-      await execFileAsync("kdialog", ["--title", "Gondolin", "--yesno", message], {
-        timeout: 60_000,
-      });
+      await execFileAsync(
+        "kdialog",
+        ["--title", "Gondolin", "--yesno", message],
+        {
+          timeout: 60_000,
+        },
+      );
       return "host";
     } catch (err: any) {
       if (typeof err?.code === "number" && err.code === 1) return "deny";
@@ -286,13 +298,22 @@ async function main() {
         return false;
       }
 
-      const protocol = parsed.protocol === "https:" ? "https" : parsed.protocol === "http:" ? "http" : null;
+      const protocol =
+        parsed.protocol === "https:"
+          ? "https"
+          : parsed.protocol === "http:"
+            ? "http"
+            : null;
       if (!protocol) return false;
 
       const hostname = parsed.hostname.toLowerCase();
       if (!hostname) return false;
 
-      const port = parsed.port ? Number(parsed.port) : protocol === "https" ? 443 : 80;
+      const port = parsed.port
+        ? Number(parsed.port)
+        : protocol === "https"
+          ? 443
+          : 80;
       if (!Number.isFinite(port) || port <= 0) return false;
 
       const existing = lookupDecision(hostname, port);
@@ -326,7 +347,8 @@ async function main() {
               : `(a=allow, d=deny) [d]`;
             const answer = await attach.promptDecision(message, choices);
             if (answer === "a" || answer === "allow") return "host";
-            if (wcLabel && (answer === "w" || answer === "wildcard")) return "wildcard";
+            if (wcLabel && (answer === "w" || answer === "wildcard"))
+              return "wildcard";
             return "deny";
           }
           return "deny";

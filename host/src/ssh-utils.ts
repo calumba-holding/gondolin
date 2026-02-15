@@ -94,7 +94,9 @@ export function parseSshTargetPattern(raw: string): SshAllowedTarget | null {
   return { pattern: normalizedPattern, port };
 }
 
-export function normalizeSshAllowedTargets(targets?: string[]): SshAllowedTarget[] {
+export function normalizeSshAllowedTargets(
+  targets?: string[],
+): SshAllowedTarget[] {
   const out: SshAllowedTarget[] = [];
   const seen = new Set<string>();
 
@@ -111,7 +113,7 @@ export function normalizeSshAllowedTargets(targets?: string[]): SshAllowedTarget
 }
 
 export function normalizeSshCredentials(
-  credentials?: Record<string, SshCredential>
+  credentials?: Record<string, SshCredential>,
 ): ResolvedSshCredential[] {
   const entries: ResolvedSshCredential[] = [];
   for (const [rawPattern, credential] of Object.entries(credentials ?? {})) {
@@ -139,7 +141,9 @@ type OpenSshKnownHostsEntry = {
   key: Buffer;
 };
 
-export function normalizeSshKnownHostsFiles(knownHostsFile?: string | string[]): string[] {
+export function normalizeSshKnownHostsFiles(
+  knownHostsFile?: string | string[],
+): string[] {
   const candidates: string[] = [];
   if (typeof knownHostsFile === "string") {
     candidates.push(knownHostsFile);
@@ -168,7 +172,9 @@ export function normalizeSshKnownHostsFiles(knownHostsFile?: string | string[]):
   return unique;
 }
 
-export function parseOpenSshKnownHosts(content: string): OpenSshKnownHostsEntry[] {
+export function parseOpenSshKnownHosts(
+  content: string,
+): OpenSshKnownHostsEntry[] {
   const entries: OpenSshKnownHostsEntry[] = [];
   for (const rawLine of content.split(/\r?\n/)) {
     const line = rawLine.trim();
@@ -209,7 +215,10 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function matchOpenSshHostPattern(hostname: string, pattern: string): boolean {
+export function matchOpenSshHostPattern(
+  hostname: string,
+  pattern: string,
+): boolean {
   const hn = hostname.toLowerCase();
   const pat = pattern.startsWith("|1|") ? pattern : pattern.toLowerCase();
 
@@ -235,8 +244,10 @@ export function matchOpenSshHostPattern(hostname: string, pattern: string): bool
   // Wildcards: "*" and "?" like OpenSSH
   if (pat.includes("*") || pat.includes("?")) {
     const re = new RegExp(
-      "^" + escapeRegExp(pat).replace(/\\\*/g, ".*").replace(/\\\?/g, ".") + "$",
-      "i"
+      "^" +
+        escapeRegExp(pat).replace(/\\\*/g, ".*").replace(/\\\?/g, ".") +
+        "$",
+      "i",
     );
     return re.test(hn);
   }
@@ -244,8 +255,13 @@ export function matchOpenSshHostPattern(hostname: string, pattern: string): bool
   return hn === pat;
 }
 
-function hostMatchesOpenSshKnownHostsList(hostname: string, patterns: string[], port: number): boolean {
-  const candidates = port === 22 ? [hostname, `[${hostname}]:22`] : [`[${hostname}]:${port}`];
+function hostMatchesOpenSshKnownHostsList(
+  hostname: string,
+  patterns: string[],
+  port: number,
+): boolean {
+  const candidates =
+    port === 22 ? [hostname, `[${hostname}]:22`] : [`[${hostname}]:${port}`];
 
   for (const candidate of candidates) {
     let positive = false;
@@ -269,7 +285,7 @@ function hostMatchesOpenSshKnownHostsList(hostname: string, patterns: string[], 
 }
 
 export function createOpenSshKnownHostsHostVerifier(
-  files: string[]
+  files: string[],
 ): (hostname: string, key: Buffer, port: number) => boolean {
   const entries: OpenSshKnownHostsEntry[] = [];
   const loadedFiles: string[] = [];
@@ -286,7 +302,9 @@ export function createOpenSshKnownHostsHostVerifier(
   }
 
   if (loadedFiles.length === 0) {
-    throw new Error(`no OpenSSH known_hosts files found (tried ${files.join(", ")})`);
+    throw new Error(
+      `no OpenSSH known_hosts files found (tried ${files.join(", ")})`,
+    );
   }
 
   return (hostname: string, key: Buffer, port: number) => {
@@ -295,7 +313,9 @@ export function createOpenSshKnownHostsHostVerifier(
     const sshPort = Number.isInteger(port) && port > 0 ? port : 22;
 
     for (const entry of entries) {
-      if (!hostMatchesOpenSshKnownHostsList(host, entry.hostPatterns, sshPort)) {
+      if (
+        !hostMatchesOpenSshKnownHostsList(host, entry.hostPatterns, sshPort)
+      ) {
         continue;
       }
 

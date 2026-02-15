@@ -19,6 +19,7 @@ make test       # Run all tests
 ```
 
 Host tests run with `tsx --test` (Node.js test runner):
+
 ```bash
 cd host && pnpm test              # All host tests
 cd host && pnpm exec tsx --test test/specific.test.ts  # Single test

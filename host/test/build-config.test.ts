@@ -16,7 +16,9 @@ test("build-config: accepts postBuild.commands", () => {
   assert.equal(validateBuildConfig(cfg), true);
 
   const parsed = parseBuildConfig(JSON.stringify(cfg));
-  assert.deepEqual(parsed.postBuild?.commands, ["pip3 install llm llm-anthropic"]);
+  assert.deepEqual(parsed.postBuild?.commands, [
+    "pip3 install llm llm-anthropic",
+  ]);
 });
 
 test("build-config: rejects invalid postBuild.commands", () => {
@@ -30,5 +32,8 @@ test("build-config: rejects invalid postBuild.commands", () => {
   };
 
   assert.equal(validateBuildConfig(invalid), false);
-  assert.throws(() => parseBuildConfig(JSON.stringify(invalid)), /Invalid build configuration/);
+  assert.throws(
+    () => parseBuildConfig(JSON.stringify(invalid)),
+    /Invalid build configuration/,
+  );
 });

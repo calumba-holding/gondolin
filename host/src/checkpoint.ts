@@ -9,7 +9,12 @@ import {
   rebaseQcow2InPlace,
 } from "./qemu-img";
 
-import { getAssetDirectory, loadAssetManifest, loadGuestAssets, type GuestAssets } from "./assets";
+import {
+  getAssetDirectory,
+  loadAssetManifest,
+  loadGuestAssets,
+  type GuestAssets,
+} from "./assets";
 import type { VMOptions } from "./vm";
 
 const CHECKPOINT_SCHEMA_VERSION = 1 as const;
@@ -38,7 +43,9 @@ function defaultCheckpointDir(): string {
 
 function sanitizeName(name: string): string {
   const trimmed = name.trim();
-  const safe = trimmed.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
+  const safe = trimmed
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return safe.length ? safe : "checkpoint";
 }
 
@@ -63,7 +70,10 @@ type VmCheckpointDataV2 = Omit<VmCheckpointData, "version"> & { version: 2 };
 
 type VmCheckpointDataOnDisk = VmCheckpointData | VmCheckpointDataV2;
 
-function writeCheckpointTrailer(diskPath: string, data: VmCheckpointData): void {
+function writeCheckpointTrailer(
+  diskPath: string,
+  data: VmCheckpointData,
+): void {
   const json = Buffer.from(JSON.stringify(data, null, 2) + "\n", "utf8");
   const footer = Buffer.alloc(TRAILER_SIZE);
   TRAILER_MAGIC.copy(footer, 0);
@@ -105,7 +115,7 @@ function readCheckpointTrailer(diskPath: string): VmCheckpointData {
 
     if (data.version !== CHECKPOINT_SCHEMA_VERSION) {
       throw new Error(
-        `unsupported checkpoint version: ${String((data as any).version)}`
+        `unsupported checkpoint version: ${String((data as any).version)}`,
       );
     }
 
@@ -137,7 +147,9 @@ function scanForBuildId(cacheRoot: string, buildId: string): string | null {
 
   const maxDirs = 5000;
   const maxDepth = 6;
-  const queue: Array<{ dir: string; depth: number }> = [{ dir: root, depth: 0 }];
+  const queue: Array<{ dir: string; depth: number }> = [
+    { dir: root, depth: 0 },
+  ];
   let visited = 0;
 
   while (queue.length) {
@@ -179,7 +191,7 @@ function devGuestOutDirs(): string[] {
   ];
 
   return possibleRepoRoots.map((repoRoot) =>
-    path.join(repoRoot, "guest", "image", "out")
+    path.join(repoRoot, "guest", "image", "out"),
   );
 }
 
@@ -240,7 +252,7 @@ function resolveAssetDirByBuildId(buildId: string): {
 
 function ensureCheckpointBackedByRootfs(
   checkpointDiskPath: string,
-  rootfsPath: string
+  rootfsPath: string,
 ): void {
   const backing = getQcow2BackingFilename(checkpointDiskPath);
   if (!backing) return;
@@ -257,7 +269,7 @@ function ensureCheckpointBackedByRootfs(
 
 function resolveGuestAssetsForResume(
   requiredBuildId: string,
-  options: VMOptions
+  options: VMOptions,
 ): { imagePath: any; assets: GuestAssets } {
   const userImagePath = options.sandbox?.imagePath;
 
@@ -267,7 +279,7 @@ function resolveGuestAssetsForResume(
       const manifest = loadAssetManifest(assetDir);
       if (!manifest?.buildId) {
         throw new Error(
-          `guest assets at ${assetDir} are missing manifest buildId (cannot resume checkpoint)`
+          `guest assets at ${assetDir} are missing manifest buildId (cannot resume checkpoint)`,
         );
       }
       if (manifest.buildId !== requiredBuildId) {
@@ -275,7 +287,7 @@ function resolveGuestAssetsForResume(
           `guest assets do not match checkpoint buildId\n` +
             `  required: ${requiredBuildId}\n` +
             `  provided: ${manifest.buildId}\n` +
-            `Fix: pass the correct assets directory to sandbox.imagePath`
+            `Fix: pass the correct assets directory to sandbox.imagePath`,
         );
       }
 
@@ -286,26 +298,26 @@ function resolveGuestAssetsForResume(
       const assets = userImagePath as GuestAssets;
       if (!assets.kernelPath || !assets.initrdPath || !assets.rootfsPath) {
         throw new Error(
-          "sandbox.imagePath object must include kernelPath, initrdPath, and rootfsPath"
+          "sandbox.imagePath object must include kernelPath, initrdPath, and rootfsPath",
         );
       }
       if (!validateGuestAssetsExist(assets)) {
         throw new Error(
-          `guest assets not found: ${assets.kernelPath}, ${assets.initrdPath}, ${assets.rootfsPath}`
+          `guest assets not found: ${assets.kernelPath}, ${assets.initrdPath}, ${assets.rootfsPath}`,
         );
       }
 
       const commonDir = findCommonAssetDir(assets);
       if (!commonDir) {
         throw new Error(
-          "cannot validate sandbox.imagePath asset object: kernel/initrd/rootfs must be in the same directory to load manifest.json"
+          "cannot validate sandbox.imagePath asset object: kernel/initrd/rootfs must be in the same directory to load manifest.json",
         );
       }
 
       const manifest = loadAssetManifest(commonDir);
       if (!manifest?.buildId) {
         throw new Error(
-          `guest assets at ${commonDir} are missing manifest buildId (cannot resume checkpoint)`
+          `guest assets at ${commonDir} are missing manifest buildId (cannot resume checkpoint)`,
         );
       }
       if (manifest.buildId !== requiredBuildId) {
@@ -313,7 +325,7 @@ function resolveGuestAssetsForResume(
           `guest assets do not match checkpoint buildId\n` +
             `  required: ${requiredBuildId}\n` +
             `  provided: ${manifest.buildId}\n` +
-            `Fix: pass the correct assets directory to sandbox.imagePath`
+            `Fix: pass the correct assets directory to sandbox.imagePath`,
         );
       }
 
@@ -321,7 +333,7 @@ function resolveGuestAssetsForResume(
     }
 
     throw new Error(
-      "sandbox.imagePath must be a directory path or an asset path object"
+      "sandbox.imagePath must be a directory path or an asset path object",
     );
   }
 
@@ -342,7 +354,7 @@ export class VmCheckpoint {
     checkpointPath: string,
     data: VmCheckpointData,
     baseVmOptions?: VMOptions | null,
-    opts?: { isDirectory?: boolean }
+    opts?: { isDirectory?: boolean },
   ) {
     this.checkpointPath = checkpointPath;
     this.isDirectory = opts?.isDirectory ?? false;
@@ -362,7 +374,9 @@ export class VmCheckpoint {
 
   /** absolute path to the directory containing the checkpoint file */
   get dir(): string {
-    return this.isDirectory ? this.checkpointPath : path.dirname(this.checkpointPath);
+    return this.isDirectory
+      ? this.checkpointPath
+      : path.dirname(this.checkpointPath);
   }
 
   /** absolute path to the qcow2 disk file */
@@ -399,7 +413,10 @@ export class VmCheckpoint {
       throw new Error(`checkpoint disk not found: ${checkpointDisk}`);
     }
 
-    const resolved = resolveGuestAssetsForResume(this.data.guestAssetBuildId, options);
+    const resolved = resolveGuestAssetsForResume(
+      this.data.guestAssetBuildId,
+      options,
+    );
 
     // Fix qcow2 backing filename portability by rebasing in-place on resume.
     ensureCheckpointBackedByRootfs(checkpointDisk, resolved.assets.rootfsPath);
@@ -440,11 +457,13 @@ export class VmCheckpoint {
       const raw = fs.readFileSync(jsonPath, "utf8");
       const data = JSON.parse(raw) as VmCheckpointDataOnDisk;
       const normalized =
-        (data as any).version === 2 ? ({ ...data, version: 1 } as VmCheckpointData) : (data as VmCheckpointData);
+        (data as any).version === 2
+          ? ({ ...data, version: 1 } as VmCheckpointData)
+          : (data as VmCheckpointData);
 
       if (normalized.version !== CHECKPOINT_SCHEMA_VERSION) {
         throw new Error(
-          `unsupported checkpoint version: ${String((data as any).version)}`
+          `unsupported checkpoint version: ${String((data as any).version)}`,
         );
       }
 
@@ -460,11 +479,13 @@ export class VmCheckpoint {
       const raw = fs.readFileSync(resolved, "utf8");
       const data = JSON.parse(raw) as VmCheckpointDataOnDisk;
       const normalized =
-        (data as any).version === 2 ? ({ ...data, version: 1 } as VmCheckpointData) : (data as VmCheckpointData);
+        (data as any).version === 2
+          ? ({ ...data, version: 1 } as VmCheckpointData)
+          : (data as VmCheckpointData);
 
       if (normalized.version !== CHECKPOINT_SCHEMA_VERSION) {
         throw new Error(
-          `unsupported checkpoint version: ${String((data as any).version)}`
+          `unsupported checkpoint version: ${String((data as any).version)}`,
         );
       }
 
@@ -497,4 +518,3 @@ export class VmCheckpoint {
     writeCheckpointTrailer(diskPath, data);
   }
 }
-

@@ -12,7 +12,11 @@ function randByte(rng: XorShift32): number {
   return rng.nextU32() & 0xff;
 }
 
-export function mutateBuffer(base: Buffer, rng: XorShift32, opts: MutateOptions): Buffer {
+export function mutateBuffer(
+  base: Buffer,
+  rng: XorShift32,
+  opts: MutateOptions,
+): Buffer {
   // Start from a copy.
   let buf = Buffer.from(base);
 

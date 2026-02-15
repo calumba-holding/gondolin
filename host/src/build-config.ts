@@ -196,7 +196,8 @@ const isOptionalStringArray = (value: unknown): boolean =>
   value === undefined || isStringArray(value);
 
 const isEnvRecord = (value: unknown): value is Record<string, string> =>
-  isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
+  isRecord(value) &&
+  Object.values(value).every((entry) => typeof entry === "string");
 
 const isEnvInput = (value: unknown): value is EnvInput =>
   isStringArray(value) || isEnvRecord(value);

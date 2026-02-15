@@ -459,7 +459,7 @@ export function decodeMessage(frame: Buffer): IncomingMessage {
 
 export function buildExecRequest(
   id: number,
-  payload: ExecRequest["p"]
+  payload: ExecRequest["p"],
 ): ExecRequest {
   const cleaned: ExecRequest["p"] = { cmd: payload.cmd };
   if (payload.argv !== undefined) cleaned.argv = payload.argv;
@@ -467,8 +467,10 @@ export function buildExecRequest(
   if (payload.cwd !== undefined) cleaned.cwd = payload.cwd;
   if (payload.stdin !== undefined) cleaned.stdin = payload.stdin;
   if (payload.pty !== undefined) cleaned.pty = payload.pty;
-  if (payload.stdout_window !== undefined) cleaned.stdout_window = payload.stdout_window;
-  if (payload.stderr_window !== undefined) cleaned.stderr_window = payload.stderr_window;
+  if (payload.stdout_window !== undefined)
+    cleaned.stdout_window = payload.stdout_window;
+  if (payload.stderr_window !== undefined)
+    cleaned.stderr_window = payload.stderr_window;
 
   return {
     v: 1,
@@ -478,7 +480,11 @@ export function buildExecRequest(
   };
 }
 
-export function buildStdinData(id: number, data: Buffer, eof?: boolean): StdinData {
+export function buildStdinData(
+  id: number,
+  data: Buffer,
+  eof?: boolean,
+): StdinData {
   return {
     v: 1,
     t: "stdin_data",
@@ -490,7 +496,11 @@ export function buildStdinData(id: number, data: Buffer, eof?: boolean): StdinDa
   };
 }
 
-export function buildPtyResize(id: number, rows: number, cols: number): PtyResize {
+export function buildPtyResize(
+  id: number,
+  rows: number,
+  cols: number,
+): PtyResize {
   return {
     v: 1,
     t: "pty_resize",
@@ -502,7 +512,11 @@ export function buildPtyResize(id: number, rows: number, cols: number): PtyResiz
   };
 }
 
-export function buildExecWindow(id: number, stdout?: number, stderr?: number): ExecWindow {
+export function buildExecWindow(
+  id: number,
+  stdout?: number,
+  stderr?: number,
+): ExecWindow {
   const p: ExecWindow["p"] = {};
   if (stdout !== undefined) p.stdout = stdout;
   if (stderr !== undefined) p.stderr = stderr;
@@ -516,7 +530,7 @@ export function buildExecWindow(id: number, stdout?: number, stderr?: number): E
 
 export function buildFileReadRequest(
   id: number,
-  payload: FileReadRequest["p"]
+  payload: FileReadRequest["p"],
 ): FileReadRequest {
   const p: FileReadRequest["p"] = { path: payload.path };
   if (payload.cwd !== undefined) p.cwd = payload.cwd;
@@ -531,7 +545,7 @@ export function buildFileReadRequest(
 
 export function buildFileWriteRequest(
   id: number,
-  payload: FileWriteRequest["p"]
+  payload: FileWriteRequest["p"],
 ): FileWriteRequest {
   const p: FileWriteRequest["p"] = { path: payload.path };
   if (payload.cwd !== undefined) p.cwd = payload.cwd;
@@ -544,7 +558,11 @@ export function buildFileWriteRequest(
   };
 }
 
-export function buildFileWriteData(id: number, data: Buffer, eof?: boolean): FileWriteData {
+export function buildFileWriteData(
+  id: number,
+  data: Buffer,
+  eof?: boolean,
+): FileWriteData {
   return {
     v: 1,
     t: "file_write_data",
@@ -558,7 +576,7 @@ export function buildFileWriteData(id: number, data: Buffer, eof?: boolean): Fil
 
 export function buildFileDeleteRequest(
   id: number,
-  payload: FileDeleteRequest["p"]
+  payload: FileDeleteRequest["p"],
 ): FileDeleteRequest {
   const p: FileDeleteRequest["p"] = { path: payload.path };
   if (payload.cwd !== undefined) p.cwd = payload.cwd;

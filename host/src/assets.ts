@@ -49,7 +49,10 @@ function getAssetBundleName(): string {
 /**
  * Walk upwards from a starting directory until the filesystem root.
  */
-function findUpwards<T>(startDir: string, probe: (dir: string) => T | null): T | null {
+function findUpwards<T>(
+  startDir: string,
+  probe: (dir: string) => T | null,
+): T | null {
   let dir = path.resolve(startDir);
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -84,11 +87,13 @@ function getAssetDir(): string {
 
   // Prefer whatever directory the caller is operating in, but also check the
   // module location (works even when invoked from a different cwd).
-  const repoDir = tryFindRepoAssetsFrom(process.cwd()) ?? tryFindRepoAssetsFrom(__dirname);
+  const repoDir =
+    tryFindRepoAssetsFrom(process.cwd()) ?? tryFindRepoAssetsFrom(__dirname);
   if (repoDir) return repoDir;
 
   // User cache directory
-  const cacheBase = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
+  const cacheBase =
+    process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");
   return path.join(cacheBase, "gondolin", resolveAssetVersion());
 }
 
@@ -276,7 +281,7 @@ export function loadGuestAssets(assetDir: string): GuestAssets {
   if (missing.length > 0) {
     throw new Error(
       `Missing guest assets in ${resolvedDir}: ${missing.join(", ")}\n` +
-        `Run 'gondolin build' to create custom assets, or ensure the directory contains all required files.`
+        `Run 'gondolin build' to create custom assets, or ensure the directory contains all required files.`,
     );
   }
 
@@ -318,7 +323,9 @@ async function downloadAndExtract(assetDir: string): Promise<void> {
   const tempFile = path.join(assetDir, bundleName);
 
   try {
-    process.stderr.write(`Downloading gondolin guest image (${assetVersion})...\n`);
+    process.stderr.write(
+      `Downloading gondolin guest image (${assetVersion})...\n`,
+    );
     process.stderr.write(`  URL: ${url}\n`);
 
     const response = await fetch(url, {
@@ -331,7 +338,7 @@ async function downloadAndExtract(assetDir: string): Promise<void> {
       throw new Error(
         `Failed to download guest image: ${response.status} ${response.statusText}\n` +
           `URL: ${url}\n` +
-          `Make sure the release exists and the asset is uploaded.`
+          `Make sure the release exists and the asset is uploaded.`,
       );
     }
 
@@ -356,7 +363,9 @@ async function downloadAndExtract(assetDir: string): Promise<void> {
           const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
           const mb = (downloadedBytes / 1024 / 1024).toFixed(1);
           const totalMb = (totalBytes / 1024 / 1024).toFixed(1);
-          process.stderr.write(`\r  Progress: ${mb}/${totalMb} MB (${percent}%)`);
+          process.stderr.write(
+            `\r  Progress: ${mb}/${totalMb} MB (${percent}%)`,
+          );
         }
       }
 
@@ -372,13 +381,16 @@ async function downloadAndExtract(assetDir: string): Promise<void> {
 
     // Extract
     process.stderr.write(`  Extracting to ${assetDir}...\n`);
-    child_process.execSync(`tar -xzf "${bundleName}"`, { cwd: assetDir, stdio: "pipe" });
+    child_process.execSync(`tar -xzf "${bundleName}"`, {
+      cwd: assetDir,
+      stdio: "pipe",
+    });
 
     // Verify extraction
     if (!assetsExist(assetDir)) {
       throw new Error(
         "Extraction completed but expected files are missing. " +
-          "The archive may be corrupted or have an unexpected structure."
+          "The archive may be corrupted or have an unexpected structure.",
       );
     }
 

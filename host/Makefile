@@ -2,6 +2,7 @@
 
 PNPM ?= pnpm
 RUN_PARALLEL ?= ../scripts/run-parallel
+PRETTIER ?= ../node_modules/.bin/prettier
 
 # Host fuzzer target name (see host/fuzz/targets)
 TARGET ?= virtio
@@ -15,7 +16,15 @@ typecheck:
 lint: typecheck
 
 format:
-	@echo "No formatter configured for host"
+	@$(PRETTIER) --write --ignore-unknown --no-error-on-unmatched-pattern \
+		"src/**/*.ts" \
+		"bin/**/*.ts" \
+		"test/**/*.ts" \
+		"fuzz/**/*.ts" \
+		"examples/**/*.ts" \
+		"package.json" \
+		"tsconfig.json" \
+		"README.md"
 
 test:
 	@$(RUN_PARALLEL) -j 1 \

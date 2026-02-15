@@ -41,7 +41,7 @@ class HookedHandle implements VirtualFileHandle {
   constructor(
     private readonly inner: VirtualFileHandle,
     private readonly hooks: VfsHooks,
-    private readonly handlePath: string
+    private readonly handlePath: string,
   ) {}
 
   get path() {
@@ -73,31 +73,95 @@ class HookedHandle implements VirtualFileHandle {
     return this.inner.closed;
   }
 
-  async read(buffer: Buffer, offset: number, length: number, position?: number | null) {
-    await this.runBefore({ op: "read", path: this.path, offset: position ?? undefined, length });
+  async read(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ) {
+    await this.runBefore({
+      op: "read",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+    });
     const result = await this.inner.read(buffer, offset, length, position);
-    await this.runAfter({ op: "read", path: this.path, offset: position ?? undefined, length, result });
+    await this.runAfter({
+      op: "read",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+      result,
+    });
     return result;
   }
 
-  readSync(buffer: Buffer, offset: number, length: number, position?: number | null) {
-    this.runBeforeSync({ op: "read", path: this.path, offset: position ?? undefined, length });
+  readSync(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ) {
+    this.runBeforeSync({
+      op: "read",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+    });
     const bytesRead = this.inner.readSync(buffer, offset, length, position);
-    this.runAfterSync({ op: "read", path: this.path, offset: position ?? undefined, length, result: bytesRead });
+    this.runAfterSync({
+      op: "read",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+      result: bytesRead,
+    });
     return bytesRead;
   }
 
-  async write(buffer: Buffer, offset: number, length: number, position?: number | null) {
-    await this.runBefore({ op: "write", path: this.path, offset: position ?? undefined, length });
+  async write(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ) {
+    await this.runBefore({
+      op: "write",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+    });
     const result = await this.inner.write(buffer, offset, length, position);
-    await this.runAfter({ op: "write", path: this.path, offset: position ?? undefined, length, result });
+    await this.runAfter({
+      op: "write",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+      result,
+    });
     return result;
   }
 
-  writeSync(buffer: Buffer, offset: number, length: number, position?: number | null) {
-    this.runBeforeSync({ op: "write", path: this.path, offset: position ?? undefined, length });
+  writeSync(
+    buffer: Buffer,
+    offset: number,
+    length: number,
+    position?: number | null,
+  ) {
+    this.runBeforeSync({
+      op: "write",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+    });
     const bytesWritten = this.inner.writeSync(buffer, offset, length, position);
-    this.runAfterSync({ op: "write", path: this.path, offset: position ?? undefined, length, result: bytesWritten });
+    this.runAfterSync({
+      op: "write",
+      path: this.path,
+      offset: position ?? undefined,
+      length,
+      result: bytesWritten,
+    });
     return bytesWritten;
   }
 
@@ -115,14 +179,28 @@ class HookedHandle implements VirtualFileHandle {
     return result;
   }
 
-  async writeFile(data: Buffer | string, options?: { encoding?: BufferEncoding }) {
-    await this.runBefore({ op: "writeFile", path: this.path, data: Buffer.isBuffer(data) ? data : Buffer.from(data) });
+  async writeFile(
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding },
+  ) {
+    await this.runBefore({
+      op: "writeFile",
+      path: this.path,
+      data: Buffer.isBuffer(data) ? data : Buffer.from(data),
+    });
     await this.inner.writeFile(data, options);
     await this.runAfter({ op: "writeFile", path: this.path });
   }
 
-  writeFileSync(data: Buffer | string, options?: { encoding?: BufferEncoding }) {
-    this.runBeforeSync({ op: "writeFile", path: this.path, data: Buffer.isBuffer(data) ? data : Buffer.from(data) });
+  writeFileSync(
+    data: Buffer | string,
+    options?: { encoding?: BufferEncoding },
+  ) {
+    this.runBeforeSync({
+      op: "writeFile",
+      path: this.path,
+      data: Buffer.isBuffer(data) ? data : Buffer.from(data),
+    });
     this.inner.writeFileSync(data, options);
     this.runAfterSync({ op: "writeFile", path: this.path });
   }
@@ -196,8 +274,14 @@ class HookedHandle implements VirtualFileHandle {
   }
 }
 
-export class SandboxVfsProvider extends VirtualProviderClass implements VirtualProvider {
-  constructor(private readonly backend: VirtualProvider, private readonly hooks: VfsHooks = {}) {
+export class SandboxVfsProvider
+  extends VirtualProviderClass
+  implements VirtualProvider
+{
+  constructor(
+    private readonly backend: VirtualProvider,
+    private readonly hooks: VfsHooks = {},
+  ) {
     super();
   }
 
@@ -215,14 +299,20 @@ export class SandboxVfsProvider extends VirtualProviderClass implements VirtualP
 
   async open(path: string, flags: string, mode?: number) {
     await this.runBefore({ op: "open", path, flags, mode });
-    const handle = this.wrapHandle(path, await this.backend.open(path, flags, mode));
+    const handle = this.wrapHandle(
+      path,
+      await this.backend.open(path, flags, mode),
+    );
     await this.runAfter({ op: "open", path, flags, mode, result: handle });
     return handle;
   }
 
   openSync(path: string, flags: string, mode?: number) {
     this.runBeforeSync({ op: "open", path, flags, mode });
-    const handle = this.wrapHandle(path, this.backend.openSync(path, flags, mode));
+    const handle = this.wrapHandle(
+      path,
+      this.backend.openSync(path, flags, mode),
+    );
     this.runAfterSync({ op: "open", path, flags, mode, result: handle });
     return handle;
   }
@@ -273,7 +363,11 @@ export class SandboxVfsProvider extends VirtualProviderClass implements VirtualP
     if (this.readonly) {
       throw createErrnoError(ERRNO.EROFS, "mkdir", path);
     }
-    await this.runBefore({ op: "mkdir", path, mode: (options as { mode?: number })?.mode });
+    await this.runBefore({
+      op: "mkdir",
+      path,
+      mode: (options as { mode?: number })?.mode,
+    });
     const result = await this.backend.mkdir(path, options);
     await this.runAfter({ op: "mkdir", path, result });
     return result;
@@ -283,7 +377,11 @@ export class SandboxVfsProvider extends VirtualProviderClass implements VirtualP
     if (this.readonly) {
       throw createErrnoError(ERRNO.EROFS, "mkdir", path);
     }
-    this.runBeforeSync({ op: "mkdir", path, mode: (options as { mode?: number })?.mode });
+    this.runBeforeSync({
+      op: "mkdir",
+      path,
+      mode: (options as { mode?: number })?.mode,
+    });
     const result = this.backend.mkdirSync(path, options);
     this.runAfterSync({ op: "mkdir", path, result });
     return result;
@@ -436,11 +534,21 @@ export class SandboxVfsProvider extends VirtualProviderClass implements VirtualP
   }
 
   watchAsync(path: string, options?: object) {
-    return this.backend.watchAsync?.(path, options) ?? super.watchAsync(path, options);
+    return (
+      this.backend.watchAsync?.(path, options) ??
+      super.watchAsync(path, options)
+    );
   }
 
-  watchFile(path: string, options?: object, listener?: (...args: unknown[]) => void) {
-    return this.backend.watchFile?.(path, options, listener) ?? super.watchFile(path, options);
+  watchFile(
+    path: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ) {
+    return (
+      this.backend.watchFile?.(path, options, listener) ??
+      super.watchFile(path, options)
+    );
   }
 
   unwatchFile(path: string, listener?: (...args: unknown[]) => void) {

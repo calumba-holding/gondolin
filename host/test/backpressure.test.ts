@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { closeVm, withVm, shouldSkipVmTests, scheduleForceExit } from "./helpers/vm-fixture";
+import {
+  closeVm,
+  withVm,
+  shouldSkipVmTests,
+  scheduleForceExit,
+} from "./helpers/vm-fixture";
 
 const skipVmTests = shouldSkipVmTests();
 const timeoutMs = Number(process.env.WS_TIMEOUT ?? 60000);
@@ -30,11 +35,13 @@ test(
   async () => {
     await withVm(vmKey, vmOptions, async (vm) => {
       await vm.start();
-      const result = await vm.exec(makeSpamCommand(5000), { windowBytes: 4096 });
+      const result = await vm.exec(makeSpamCommand(5000), {
+        windowBytes: 4096,
+      });
       assert.equal(result.exitCode, 0);
       assert.ok(result.stdout.length > 4096, "expected stdout > window size");
     });
-  }
+  },
 );
 
 test(
@@ -90,14 +97,17 @@ test(
 
       const result = await proc;
       assert.equal(result.exitCode, 0);
-      assert.ok(received > 512 * 1024, `expected to receive >512KiB, got ${received}`);
+      assert.ok(
+        received > 512 * 1024,
+        `expected to receive >512KiB, got ${received}`,
+      );
 
       // We expect the internal readable buffer to remain bounded.
       // Allow a little slack for Node stream bookkeeping.
       assert.ok(
         maxBuffered <= windowBytes + 1024,
-        `expected max buffered <= ${windowBytes + 1024}, got ${maxBuffered}`
+        `expected max buffered <= ${windowBytes + 1024}, got ${maxBuffered}`,
       );
     });
-  }
+  },
 );

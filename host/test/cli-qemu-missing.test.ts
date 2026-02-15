@@ -15,7 +15,9 @@ function makeTempGuestDir(): string {
 
 test("cli: gondolin bash renders a friendly error if qemu is missing from PATH", () => {
   const guestDir = makeTempGuestDir();
-  const emptyPathDir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-empty-path-"));
+  const emptyPathDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "gondolin-empty-path-"),
+  );
 
   try {
     const hostDir = path.join(__dirname, "..");
@@ -32,10 +34,14 @@ test("cli: gondolin bash renders a friendly error if qemu is missing from PATH",
         },
         encoding: "utf8",
         timeout: 15000,
-      }
+      },
     );
 
-    assert.notEqual(result.status, 0, `expected non-zero exit, got ${result.status}`);
+    assert.notEqual(
+      result.status,
+      0,
+      `expected non-zero exit, got ${result.status}`,
+    );
 
     const stderr = result.stderr ?? "";
     assert.match(stderr, /QEMU binary '.*qemu.*' not found/i);

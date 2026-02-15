@@ -11,8 +11,8 @@ it can use.
 
 You need QEMU installed to run the micro-VMs:
 
-| macOS | Linux (Debian/Ubuntu) |
-|-------|----------------------|
+| macOS               | Linux (Debian/Ubuntu)              |
+| ------------------- | ---------------------------------- |
 | `brew install qemu` | `sudo apt install qemu-system-arm` |
 
 - Node.js >= 22

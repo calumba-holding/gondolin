@@ -12,21 +12,29 @@ import {
   VirtualProviderClass,
 } from "./utils";
 
-export class MountRouterProvider extends VirtualProviderClass implements VirtualProvider {
+export class MountRouterProvider
+  extends VirtualProviderClass
+  implements VirtualProvider
+{
   private readonly mountMap: Map<string, VirtualProvider>;
   private readonly mountPaths: string[];
   private readonly allReadonly: boolean;
   private readonly allSymlinks: boolean;
   private readonly allWatch: boolean;
 
-  constructor(mounts: Record<string, VirtualProvider> | Map<string, VirtualProvider>) {
+  constructor(
+    mounts: Record<string, VirtualProvider> | Map<string, VirtualProvider>,
+  ) {
     super();
-    const normalized = mounts instanceof Map ? mounts : normalizeMountMap(mounts);
+    const normalized =
+      mounts instanceof Map ? mounts : normalizeMountMap(mounts);
     if (normalized.size === 0) {
       throw new Error("mounts cannot be empty");
     }
     this.mountMap = normalized;
-    this.mountPaths = Array.from(normalized.keys()).sort((a, b) => b.length - a.length);
+    this.mountPaths = Array.from(normalized.keys()).sort(
+      (a, b) => b.length - a.length,
+    );
     const providers = Array.from(normalized.values());
     this.allReadonly = providers.every((provider) => provider.readonly);
     this.allSymlinks = providers.every((provider) => provider.supportsSymlinks);
@@ -45,7 +53,11 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
     return this.allWatch;
   }
 
-  async open(entryPath: string, flags: string, mode?: number): Promise<VirtualFileHandle> {
+  async open(
+    entryPath: string,
+    flags: string,
+    mode?: number,
+  ): Promise<VirtualFileHandle> {
     const mount = this.requireMount(entryPath, "open");
     return mount.provider.open(mount.relativePath, flags, mode);
   }
@@ -146,7 +158,9 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   async readdir(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     const children = this.virtualChildren(entryPath);
-    const withTypes = Boolean((options as { withFileTypes?: boolean } | undefined)?.withFileTypes);
+    const withTypes = Boolean(
+      (options as { withFileTypes?: boolean } | undefined)?.withFileTypes,
+    );
 
     if (!mount) {
       if (children.length === 0) {
@@ -157,7 +171,10 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
 
     if (mount.mountPath === "/" && children.length > 0) {
       try {
-        const entries = (await mount.provider.readdir(mount.relativePath, options)) as Array<string | fs.Dirent>;
+        const entries = (await mount.provider.readdir(
+          mount.relativePath,
+          options,
+        )) as Array<string | fs.Dirent>;
         return mergeEntries(entries, children, withTypes);
       } catch (err) {
         if (isNoEntryError(err)) {
@@ -167,14 +184,19 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
       }
     }
 
-    const entries = (await mount.provider.readdir(mount.relativePath, options)) as Array<string | fs.Dirent>;
+    const entries = (await mount.provider.readdir(
+      mount.relativePath,
+      options,
+    )) as Array<string | fs.Dirent>;
     return mergeEntries(entries, children, withTypes);
   }
 
   readdirSync(entryPath: string, options?: object) {
     const mount = this.resolveMount(entryPath);
     const children = this.virtualChildren(entryPath);
-    const withTypes = Boolean((options as { withFileTypes?: boolean } | undefined)?.withFileTypes);
+    const withTypes = Boolean(
+      (options as { withFileTypes?: boolean } | undefined)?.withFileTypes,
+    );
 
     if (!mount) {
       if (children.length === 0) {
@@ -185,7 +207,10 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
 
     if (mount.mountPath === "/" && children.length > 0) {
       try {
-        const entries = mount.provider.readdirSync(mount.relativePath, options) as Array<string | fs.Dirent>;
+        const entries = mount.provider.readdirSync(
+          mount.relativePath,
+          options,
+        ) as Array<string | fs.Dirent>;
         return mergeEntries(entries, children, withTypes);
       } catch (err) {
         if (isNoEntryError(err)) {
@@ -195,7 +220,10 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
       }
     }
 
-    const entries = mount.provider.readdirSync(mount.relativePath, options) as Array<string | fs.Dirent>;
+    const entries = mount.provider.readdirSync(
+      mount.relativePath,
+      options,
+    ) as Array<string | fs.Dirent>;
     return mergeEntries(entries, children, withTypes);
   }
 
@@ -400,7 +428,9 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   async statfs(entryPath: string): Promise<VfsStatfs> {
     const mount = this.resolveMount(entryPath);
     if (mount) {
-      const provider = mount.provider as { statfs?: (p: string) => Promise<VfsStatfs> };
+      const provider = mount.provider as {
+        statfs?: (p: string) => Promise<VfsStatfs>;
+      };
       if (typeof provider.statfs === "function") {
         return provider.statfs(mount.relativePath);
       }
@@ -415,7 +445,9 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
       if (!mountPath.startsWith(prefix)) continue;
       const provider = this.mountMap.get(mountPath);
       if (!provider) continue;
-      const withStatfs = provider as { statfs?: (p: string) => Promise<VfsStatfs> };
+      const withStatfs = provider as {
+        statfs?: (p: string) => Promise<VfsStatfs>;
+      };
       if (typeof withStatfs.statfs !== "function") continue;
       try {
         return await withStatfs.statfs("/");
@@ -445,7 +477,11 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
     return super.watchAsync(mount.relativePath, options);
   }
 
-  watchFile(entryPath: string, options?: object, listener?: (...args: unknown[]) => void) {
+  watchFile(
+    entryPath: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ) {
     const mount = this.requireMount(entryPath, "watchFile");
     if (mount.provider.watchFile) {
       return mount.provider.watchFile(mount.relativePath, options, listener);
@@ -520,15 +556,16 @@ export class MountRouterProvider extends VirtualProviderClass implements Virtual
   }
 }
 
-
 function mergeEntries(
   entries: Array<string | fs.Dirent>,
   children: string[],
-  withTypes: boolean
+  withTypes: boolean,
 ) {
   if (children.length === 0) return entries;
   const childSet = new Set(children);
-  const filtered = entries.filter((entry) => !childSet.has(getEntryName(entry)));
+  const filtered = entries.filter(
+    (entry) => !childSet.has(getEntryName(entry)),
+  );
   if (!withTypes) {
     return [...filtered, ...children];
   }
@@ -539,7 +576,6 @@ function mergeEntries(
   }
   return dirents;
 }
-
 
 function getEntryName(entry: string | fs.Dirent) {
   return typeof entry === "string" ? entry : entry.name;

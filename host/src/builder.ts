@@ -11,11 +11,14 @@ import os from "os";
 import { spawn, execFileSync, SpawnOptions } from "child_process";
 import { createHash } from "crypto";
 
-import type {
-  BuildConfig,
-  Architecture,
-} from "./build-config";
-import { MANIFEST_FILENAME, computeAssetBuildId, loadAssetManifest, type AssetManifest } from "./assets";
+import type { BuildConfig, Architecture } from "./build-config";
+import { detectHostArchitectureSync } from "./host-arch";
+import {
+  MANIFEST_FILENAME,
+  computeAssetBuildId,
+  loadAssetManifest,
+  type AssetManifest,
+} from "./assets";
 import {
   buildAlpineImages,
   downloadFile,
@@ -23,7 +26,6 @@ import {
   parseTar,
   parseApkIndex,
 } from "./build-alpine";
-
 
 /** Fixed output filenames for assets */
 const KERNEL_FILENAME = "vmlinuz-virt";
@@ -62,7 +64,7 @@ function resolveAlpineConfig(config: BuildConfig): ResolvedAlpineConfig {
   const alpine = config.alpine ?? { version: "3.23.0" };
   const kernelPackage = alpine.kernelPackage ?? "linux-virt";
   const defaultRootfsPackages = DEFAULT_ROOTFS_PACKAGES.map((pkg) =>
-    pkg === "linux-virt" ? kernelPackage : pkg
+    pkg === "linux-virt" ? kernelPackage : pkg,
   );
 
   return {
@@ -114,7 +116,7 @@ export interface BuildResult {
  */
 export async function buildAssets(
   config: BuildConfig,
-  options: BuildOptions
+  options: BuildOptions,
 ): Promise<BuildResult> {
   const verbose = options.verbose ?? true;
   const log = verbose
@@ -123,7 +125,7 @@ export async function buildAssets(
 
   if (config.distro !== "alpine") {
     throw new Error(
-      `Distro '${config.distro}' is not supported yet. Only 'alpine' builds are implemented.`
+      `Distro '${config.distro}' is not supported yet. Only 'alpine' builds are implemented.`,
     );
   }
 
@@ -144,7 +146,8 @@ export async function buildAssets(
   }
 
   const workDir =
-    options.workDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-build-"));
+    options.workDir ??
+    fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-build-"));
   log(`Work directory: ${workDir}`);
 
   // Native Linux build
@@ -169,7 +172,7 @@ function shouldUseContainer(config: BuildConfig): boolean {
   // On macOS, cross-arch builds default to a Linux container to keep the build
   // environment consistent and to avoid relying on host tooling for ext4/cpio.
   if (process.platform === "darwin") {
-    const hostArch = detectHostArch();
+    const hostArch = detectHostArchitectureSync();
     if (hostArch !== config.arch) {
       return true;
     }
@@ -179,30 +182,6 @@ function shouldUseContainer(config: BuildConfig): boolean {
   return false;
 }
 
-function detectHostArch(): Architecture {
-  let arch = process.arch;
-
-  if (process.platform === "darwin" && process.arch === "x64") {
-    try {
-      const result = execFileSync("sysctl", ["-n", "hw.optional.arm64"], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      if (result.trim() === "1") {
-        arch = "arm64";
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  if (arch === "arm64") {
-    return "aarch64";
-  }
-
-  return "x86_64";
-}
-
 /**
  * Build assets natively (Linux or macOS with appropriate tools).
  */
@@ -210,16 +189,22 @@ async function buildNative(
   config: BuildConfig,
   options: BuildOptions,
   workDir: string,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): Promise<BuildResult> {
   const outputDir = path.resolve(options.outputDir);
 
   const configDir = options.configDir;
 
   // Step 1: Build or locate sandboxd, sandboxfs, sandboxssh, and sandboxingress binaries
-  let sandboxdPath = config.sandboxdPath ? resolveConfigPath(config.sandboxdPath, configDir) : undefined;
-  let sandboxfsPath = config.sandboxfsPath ? resolveConfigPath(config.sandboxfsPath, configDir) : undefined;
-  let sandboxsshPath = config.sandboxsshPath ? resolveConfigPath(config.sandboxsshPath, configDir) : undefined;
+  let sandboxdPath = config.sandboxdPath
+    ? resolveConfigPath(config.sandboxdPath, configDir)
+    : undefined;
+  let sandboxfsPath = config.sandboxfsPath
+    ? resolveConfigPath(config.sandboxfsPath, configDir)
+    : undefined;
+  let sandboxsshPath = config.sandboxsshPath
+    ? resolveConfigPath(config.sandboxsshPath, configDir)
+    : undefined;
   let sandboxingressPath = config.sandboxingressPath
     ? resolveConfigPath(config.sandboxingressPath, configDir)
     : undefined;
@@ -229,9 +214,9 @@ async function buildNative(
     if (!guestDir) {
       throw new Error(
         "Could not find guest directory for Zig build. Either:\n" +
-        "  1. Run from a gondolin checkout, or\n" +
-        "  2. Set GONDOLIN_GUEST_SRC to the guest directory, or\n" +
-        "  3. Provide sandboxdPath and sandboxfsPath in the build config."
+          "  1. Run from a gondolin checkout, or\n" +
+          "  2. Set GONDOLIN_GUEST_SRC to the guest directory, or\n" +
+          "  3. Provide sandboxdPath and sandboxfsPath in the build config.",
       );
     }
     log(`Using guest sources from: ${guestDir}`);
@@ -240,15 +225,31 @@ async function buildNative(
     sandboxdPath = path.join(guestDir, "zig-out", "bin", "sandboxd");
     sandboxfsPath = path.join(guestDir, "zig-out", "bin", "sandboxfs");
     sandboxsshPath = path.join(guestDir, "zig-out", "bin", "sandboxssh");
-    sandboxingressPath = path.join(guestDir, "zig-out", "bin", "sandboxingress");
+    sandboxingressPath = path.join(
+      guestDir,
+      "zig-out",
+      "bin",
+      "sandboxingress",
+    );
   } else {
-    if (!sandboxdPath || !sandboxfsPath || !sandboxsshPath || !sandboxingressPath) {
+    if (
+      !sandboxdPath ||
+      !sandboxfsPath ||
+      !sandboxsshPath ||
+      !sandboxingressPath
+    ) {
       const guestDir = findGuestDir();
-      sandboxdPath = sandboxdPath ?? path.join(guestDir ?? "", "zig-out", "bin", "sandboxd");
-      sandboxfsPath = sandboxfsPath ?? path.join(guestDir ?? "", "zig-out", "bin", "sandboxfs");
-      sandboxsshPath = sandboxsshPath ?? path.join(guestDir ?? "", "zig-out", "bin", "sandboxssh");
+      sandboxdPath =
+        sandboxdPath ?? path.join(guestDir ?? "", "zig-out", "bin", "sandboxd");
+      sandboxfsPath =
+        sandboxfsPath ??
+        path.join(guestDir ?? "", "zig-out", "bin", "sandboxfs");
+      sandboxsshPath =
+        sandboxsshPath ??
+        path.join(guestDir ?? "", "zig-out", "bin", "sandboxssh");
       sandboxingressPath =
-        sandboxingressPath ?? path.join(guestDir ?? "", "zig-out", "bin", "sandboxingress");
+        sandboxingressPath ??
+        path.join(guestDir ?? "", "zig-out", "bin", "sandboxingress");
     }
   }
 
@@ -273,41 +274,46 @@ async function buildNative(
   warnOnKernelPackageMismatch(alpineConfig.rootfsPackages, kernelPackage);
 
   // Determine cache directory
-  const cacheDir = path.join(
-    os.homedir(), ".cache", "gondolin", "build"
-  );
+  const cacheDir = path.join(os.homedir(), ".cache", "gondolin", "build");
 
   // Read custom init scripts if provided
   let rootfsInit: string | undefined;
   let initramfsInit: string | undefined;
   let rootfsInitExtra: string | undefined;
   if (config.init?.rootfsInit) {
-    rootfsInit = fs.readFileSync(resolveConfigPath(config.init.rootfsInit, configDir), "utf8");
+    rootfsInit = fs.readFileSync(
+      resolveConfigPath(config.init.rootfsInit, configDir),
+      "utf8",
+    );
   }
   if (config.init?.initramfsInit) {
     initramfsInit = fs.readFileSync(
       resolveConfigPath(config.init.initramfsInit, configDir),
-      "utf8"
+      "utf8",
     );
   }
   if (config.init?.rootfsInitExtra) {
     rootfsInitExtra = fs.readFileSync(
       resolveConfigPath(config.init.rootfsInitExtra, configDir),
-      "utf8"
+      "utf8",
     );
   }
 
   // Compute Alpine URL if a custom mirror is set
   let alpineUrl: string | undefined;
   if (alpineConfig.mirror) {
-    const branch = alpineConfig.branch ?? `v${alpineConfig.version.split(".").slice(0, 2).join(".")}`;
+    const branch =
+      alpineConfig.branch ??
+      `v${alpineConfig.version.split(".").slice(0, 2).join(".")}`;
     alpineUrl = `${alpineConfig.mirror}/${branch}/releases/${config.arch}/alpine-minirootfs-${alpineConfig.version}-${config.arch}.tar.gz`;
   }
 
   await buildAlpineImages({
     arch: config.arch,
     alpineVersion: alpineConfig.version,
-    alpineBranch: alpineConfig.branch ?? `v${alpineConfig.version.split(".").slice(0, 2).join(".")}`,
+    alpineBranch:
+      alpineConfig.branch ??
+      `v${alpineConfig.version.split(".").slice(0, 2).join(".")}`,
     alpineUrl,
     rootfsPackages: alpineConfig.rootfsPackages,
     initramfsPackages: alpineConfig.initramfsPackages,
@@ -391,7 +397,7 @@ async function buildNative(
 async function buildInContainer(
   config: BuildConfig,
   options: BuildOptions,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): Promise<BuildResult> {
   const runtime = detectContainerRuntime(config.container?.runtime);
   const image = config.container?.image ?? "alpine:3.23";
@@ -404,7 +410,7 @@ async function buildInContainer(
   const guestDir = findGuestDir();
   if (!guestDir) {
     throw new Error(
-      "Could not find guest directory. Make sure you're running from a gondolin checkout."
+      "Could not find guest directory. Make sure you're running from a gondolin checkout.",
     );
   }
 
@@ -422,7 +428,7 @@ async function buildInContainer(
   if (!fs.existsSync(hostDistBuilder)) {
     throw new Error(
       `Host dist build not found at ${hostDistBuilder}. ` +
-        "Run `pnpm -C host build` (repo checkout) or reinstall the package."
+        "Run `pnpm -C host build` (repo checkout) or reinstall the package.",
     );
   }
 
@@ -450,49 +456,52 @@ async function buildInContainer(
   if (containerConfig.init?.rootfsInit) {
     copyExecutable(
       resolveConfigPath(containerConfig.init.rootfsInit, options.configDir),
-      "rootfs-init"
+      "rootfs-init",
     );
     containerConfig.init.rootfsInit = "/work/rootfs-init";
   }
   if (containerConfig.init?.initramfsInit) {
     copyExecutable(
       resolveConfigPath(containerConfig.init.initramfsInit, options.configDir),
-      "initramfs-init"
+      "initramfs-init",
     );
     containerConfig.init.initramfsInit = "/work/initramfs-init";
   }
   if (containerConfig.init?.rootfsInitExtra) {
     copyExecutable(
-      resolveConfigPath(containerConfig.init.rootfsInitExtra, options.configDir),
-      "rootfs-init-extra"
+      resolveConfigPath(
+        containerConfig.init.rootfsInitExtra,
+        options.configDir,
+      ),
+      "rootfs-init-extra",
     );
     containerConfig.init.rootfsInitExtra = "/work/rootfs-init-extra";
   }
   if (containerConfig.sandboxdPath) {
     copyExecutable(
       resolveConfigPath(containerConfig.sandboxdPath, options.configDir),
-      "sandboxd"
+      "sandboxd",
     );
     containerConfig.sandboxdPath = "/work/sandboxd";
   }
   if (containerConfig.sandboxfsPath) {
     copyExecutable(
       resolveConfigPath(containerConfig.sandboxfsPath, options.configDir),
-      "sandboxfs"
+      "sandboxfs",
     );
     containerConfig.sandboxfsPath = "/work/sandboxfs";
   }
   if (containerConfig.sandboxsshPath) {
     copyExecutable(
       resolveConfigPath(containerConfig.sandboxsshPath, options.configDir),
-      "sandboxssh"
+      "sandboxssh",
     );
     containerConfig.sandboxsshPath = "/work/sandboxssh";
   }
   if (containerConfig.sandboxingressPath) {
     copyExecutable(
       resolveConfigPath(containerConfig.sandboxingressPath, options.configDir),
-      "sandboxingress"
+      "sandboxingress",
     );
     containerConfig.sandboxingressPath = "/work/sandboxingress";
   }
@@ -567,7 +576,7 @@ node /work/run-build.js
   const manifest = loadAssetManifest(outputDir);
   if (!manifest) {
     throw new Error(
-      `Container build completed but manifest was not found in ${outputDir}`
+      `Container build completed but manifest was not found in ${outputDir}`,
     );
   }
 
@@ -591,7 +600,7 @@ node /work/run-build.js
 async function buildGuestBinaries(
   guestDir: string,
   arch: Architecture,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): Promise<void> {
   const zigTarget = ZIG_TARGETS[arch];
   log(`Building for target: ${zigTarget}`);
@@ -600,7 +609,7 @@ async function buildGuestBinaries(
     "zig",
     ["build", "-Doptimize=ReleaseSmall", `-Dtarget=${zigTarget}`],
     { cwd: guestDir },
-    log
+    log,
   );
 }
 
@@ -614,12 +623,16 @@ function resolveKernelConfig(alpineConfig: {
   kernelImage?: string;
 }): AlpineKernelConfig {
   const kernelPackage = alpineConfig.kernelPackage ?? "linux-virt";
-  const kernelImage = alpineConfig.kernelImage ?? deriveKernelImage(kernelPackage);
+  const kernelImage =
+    alpineConfig.kernelImage ?? deriveKernelImage(kernelPackage);
   return { kernelPackage, kernelImage };
 }
 
 function deriveKernelImage(kernelPackage: string): string {
-  if (kernelPackage.startsWith("linux-") && kernelPackage.length > "linux-".length) {
+  if (
+    kernelPackage.startsWith("linux-") &&
+    kernelPackage.length > "linux-".length
+  ) {
     return `vmlinuz-${kernelPackage.slice("linux-".length)}`;
   }
   return "vmlinuz-virt";
@@ -627,12 +640,12 @@ function deriveKernelImage(kernelPackage: string): string {
 
 function warnOnKernelPackageMismatch(
   rootfsPackages: string[],
-  kernelPackage: string
+  kernelPackage: string,
 ): void {
   if (!rootfsPackages.includes(kernelPackage)) {
     process.stderr.write(
       `Warning: rootfsPackages does not include kernel package '${kernelPackage}'. ` +
-        "This may cause module mismatches at boot.\n"
+        "This may cause module mismatches at boot.\n",
     );
   }
 }
@@ -651,7 +664,7 @@ async function fetchKernel(
     kernelImage?: string;
   },
   cacheDir: string,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): Promise<void> {
   const kernelPath = path.join(outputDir, KERNEL_FILENAME);
 
@@ -662,7 +675,8 @@ async function fetchKernel(
   }
 
   const version = alpineConfig.version;
-  const branch = alpineConfig.branch ?? `v${version.split(".").slice(0, 2).join(".")}`;
+  const branch =
+    alpineConfig.branch ?? `v${version.split(".").slice(0, 2).join(".")}`;
   const mirror = alpineConfig.mirror ?? "https://dl-cdn.alpinelinux.org/alpine";
   const { kernelPackage, kernelImage } = resolveKernelConfig(alpineConfig);
 
@@ -671,7 +685,10 @@ async function fetchKernel(
   fs.mkdirSync(cacheDir, { recursive: true });
 
   // Download and parse APKINDEX to find kernel version
-  const indexTarPath = path.join(cacheDir, `APKINDEX-main-${branch}-${arch}.tar.gz`);
+  const indexTarPath = path.join(
+    cacheDir,
+    `APKINDEX-main-${branch}-${arch}.tar.gz`,
+  );
   const indexUrl = `${mirror}/${branch}/main/${arch}/APKINDEX.tar.gz`;
 
   if (!fs.existsSync(indexTarPath)) {
@@ -707,12 +724,12 @@ async function fetchKernel(
   const apkRaw = await decompressTarGz(apkPath);
   const apkEntries = parseTar(apkRaw);
   const kernelEntry = apkEntries.find(
-    (e) => e.name === `boot/${kernelImage}` && e.content
+    (e) => e.name === `boot/${kernelImage}` && e.content,
   );
 
   if (!kernelEntry?.content) {
     throw new Error(
-      `Kernel image 'boot/${kernelImage}' not found in ${apkFilename}`
+      `Kernel image 'boot/${kernelImage}' not found in ${apkFilename}`,
     );
   }
 
@@ -729,8 +746,8 @@ async function fetchKernel(
 function findGuestDir(): string | null {
   // Check common locations relative to the package
   const candidates = [
-    path.resolve(__dirname, "..", "..", "guest"),           // from src/
-    path.resolve(__dirname, "..", "..", "..", "guest"),     // from dist/src/
+    path.resolve(__dirname, "..", "..", "guest"), // from src/
+    path.resolve(__dirname, "..", "..", "..", "guest"), // from dist/src/
   ];
 
   for (const candidate of candidates) {
@@ -784,7 +801,10 @@ function findHostPackageRoot(): string | null {
  * When running from a repository checkout (host/src via tsx), we rebuild dist so
  * the container doesn't execute stale JS.
  */
-function ensureHostDistBuilt(hostPkgRoot: string, log: (msg: string) => void): void {
+function ensureHostDistBuilt(
+  hostPkgRoot: string,
+  log: (msg: string) => void,
+): void {
   const distBuilder = path.join(hostPkgRoot, "dist", "src", "builder.js");
 
   // If we're already running from dist/, don't rebuild (and we may not have dev deps).
@@ -801,7 +821,7 @@ function ensureHostDistBuilt(hostPkgRoot: string, log: (msg: string) => void): v
     "node_modules",
     "typescript",
     "bin",
-    "tsc"
+    "tsc",
   );
 
   // If we can't find tsconfig, assume this is an installed package and dist was shipped.
@@ -816,7 +836,7 @@ function ensureHostDistBuilt(hostPkgRoot: string, log: (msg: string) => void): v
     }
     throw new Error(
       `Cannot build host dist output: typescript not found at ${tscPath}. ` +
-        "Run `pnpm install` and then `pnpm -C host build`."
+        "Run `pnpm install` and then `pnpm -C host build`.",
     );
   }
 
@@ -845,13 +865,13 @@ function ensureHostDistBuilt(hostPkgRoot: string, log: (msg: string) => void): v
         `Command: ${process.execPath} ${tscPath} -p ${tsconfigPath}\n` +
         (stdout || stderr
           ? `--- tsc output ---\n${stdout}${stderr}`
-          : "(no tsc output captured)")
+          : "(no tsc output captured)"),
     );
   }
 
   if (!fs.existsSync(distBuilder)) {
     throw new Error(
-      `Host dist build failed: ${distBuilder} not found after tsc run`
+      `Host dist build failed: ${distBuilder} not found after tsc run`,
     );
   }
 }
@@ -860,7 +880,7 @@ function ensureHostDistBuilt(hostPkgRoot: string, log: (msg: string) => void): v
  * Detect available container runtime.
  */
 function detectContainerRuntime(
-  preferred?: "docker" | "podman"
+  preferred?: "docker" | "podman",
 ): "docker" | "podman" {
   if (preferred) {
     try {
@@ -882,7 +902,7 @@ function detectContainerRuntime(
   }
 
   throw new Error(
-    "No container runtime found. Please install Docker or Podman."
+    "No container runtime found. Please install Docker or Podman.",
   );
 }
 
@@ -893,7 +913,7 @@ async function runCommand(
   command: string,
   args: string[],
   options: SpawnOptions,
-  log: (msg: string) => void
+  log: (msg: string) => void,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     log(`Running: ${command} ${args.join(" ")}`);
@@ -955,9 +975,21 @@ export function verifyAssets(assetDir: string): boolean {
   }
 
   const assets = [
-    { name: "kernel", file: manifest.assets.kernel, expected: manifest.checksums.kernel },
-    { name: "initramfs", file: manifest.assets.initramfs, expected: manifest.checksums.initramfs },
-    { name: "rootfs", file: manifest.assets.rootfs, expected: manifest.checksums.rootfs },
+    {
+      name: "kernel",
+      file: manifest.assets.kernel,
+      expected: manifest.checksums.kernel,
+    },
+    {
+      name: "initramfs",
+      file: manifest.assets.initramfs,
+      expected: manifest.checksums.initramfs,
+    },
+    {
+      name: "rootfs",
+      file: manifest.assets.rootfs,
+      expected: manifest.checksums.rootfs,
+    },
   ];
 
   for (const { name, file, expected } of assets) {
@@ -967,7 +999,9 @@ export function verifyAssets(assetDir: string): boolean {
     }
     const actual = computeFileHash(filePath);
     if (actual !== expected) {
-      process.stderr.write(`Checksum mismatch for ${name}: expected ${expected}, got ${actual}\n`);
+      process.stderr.write(
+        `Checksum mismatch for ${name}: expected ${expected}, got ${actual}\n`,
+      );
       return false;
     }
   }

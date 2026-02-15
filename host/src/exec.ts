@@ -32,7 +32,7 @@ export class ExecResult {
     stdout: Buffer,
     stderr: Buffer,
     signal?: number,
-    encoding: BufferEncoding = DEFAULT_ENCODING
+    encoding: BufferEncoding = DEFAULT_ENCODING,
   ) {
     this.id = id;
     this.exitCode = exitCode;
@@ -132,7 +132,7 @@ export type ExecOptions = {
 /** @internal */
 export function normalizeCommand(
   command: string | string[],
-  options: Pick<ExecOptions, "argv">
+  options: Pick<ExecOptions, "argv">,
 ): {
   cmd: string;
   argv: string[];
@@ -171,7 +171,7 @@ function isAsyncIterable(value: unknown): value is AsyncIterable<Buffer> {
 
 /** @internal */
 export async function* toAsyncIterable(
-  value: boolean | string | Buffer | Readable | AsyncIterable<Buffer>
+  value: boolean | string | Buffer | Readable | AsyncIterable<Buffer>,
 ): AsyncIterable<Buffer> {
   if (
     typeof value === "string" ||
@@ -218,7 +218,7 @@ function asWritableStream(value: unknown): NodeJS.WritableStream | null {
 export function resolveOutputMode(
   value: ExecOutputMode | undefined,
   legacyBuffer: boolean | undefined,
-  streamName: "stdout" | "stderr"
+  streamName: "stdout" | "stderr",
 ): ResolvedExecOutputMode {
   // If the user didn't pass an explicit mode, default based on legacy buffer option.
   if (value === undefined) {
@@ -251,7 +251,7 @@ export function resolveOutputMode(
   // Fail-fast on invalid explicit values; otherwise misconfiguration silently changes
   // buffering/backpressure behavior.
   throw new Error(
-    `invalid exec ${streamName} option: ${String(value)} (expected "buffer"|"pipe"|"inherit"|"ignore" or a writable stream)`
+    `invalid exec ${streamName} option: ${String(value)} (expected "buffer"|"pipe"|"inherit"|"ignore" or a writable stream)`,
   );
 }
 
@@ -266,7 +266,7 @@ function resolveWindowBytes(value: number | undefined): number {
 class ExecPipeStream extends Readable {
   constructor(
     windowBytes: number,
-    private readonly onConsumed: () => void
+    private readonly onConsumed: () => void,
   ) {
     super({ highWaterMark: windowBytes });
   }
@@ -419,7 +419,9 @@ export type ExecSession = {
   signalListener?: () => void;
 
   requestReady: boolean;
-  pendingStdin: Array<{ type: "data"; data: Buffer | string } | { type: "eof" }>;
+  pendingStdin: Array<
+    { type: "data"; data: Buffer | string } | { type: "eof" }
+  >;
   pendingResize: { rows: number; cols: number } | null;
 };
 
@@ -430,12 +432,14 @@ export type ExecProcessCallbacks = {
   cleanup: (id: number) => void;
 };
 
-export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<string> {
+export class ExecProcess
+  implements PromiseLike<ExecResult>, AsyncIterable<string>
+{
   private attached = false;
 
   constructor(
     private readonly session: ExecSession,
-    private readonly callbacks: ExecProcessCallbacks
+    private readonly callbacks: ExecProcessCallbacks,
   ) {}
 
   get id(): number {
@@ -443,14 +447,16 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
   }
 
   then<TResult1 = ExecResult, TResult2 = never>(
-    onfulfilled?: ((value: ExecResult) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
+    onfulfilled?:
+      | ((value: ExecResult) => TResult1 | PromiseLike<TResult1>)
+      | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
     return this.session.resultPromise.then(onfulfilled, onrejected);
   }
 
   catch<TResult = never>(
-    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null
+    onrejected?: ((reason: unknown) => TResult | PromiseLike<TResult>) | null,
   ): Promise<ExecResult | TResult> {
     return this.session.resultPromise.catch(onrejected);
   }
@@ -485,7 +491,7 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
   async *[Symbol.asyncIterator](): AsyncIterator<string> {
     const stdout = this.session.stdoutPipe;
     if (!stdout) {
-      throw new Error("stdout is not piped (set exec options.stdout=\"pipe\")");
+      throw new Error('stdout is not piped (set exec options.stdout="pipe")');
     }
     const encoding = this.session.encoding;
     for await (const chunk of stdout) {
@@ -497,7 +503,9 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
     const stdout = this.session.stdoutPipe;
     const stderr = this.session.stderrPipe;
     if (!stdout || !stderr) {
-      throw new Error("stdout/stderr are not piped (set exec options.stdout/stderr=\"pipe\")");
+      throw new Error(
+        'stdout/stderr are not piped (set exec options.stdout/stderr="pipe")',
+      );
     }
 
     const encoding = this.session.encoding;
@@ -516,10 +524,14 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
       if (typeof chunk === "string") {
         const enc = (pipe as any).readableEncoding;
         const bufEnc: BufferEncoding =
-          typeof enc === "string" && enc.length > 0 ? (enc as BufferEncoding) : "utf8";
+          typeof enc === "string" && enc.length > 0
+            ? (enc as BufferEncoding)
+            : "utf8";
         return Buffer.from(chunk, bufEnc);
       }
-      throw new Error(`unexpected ${typeof chunk} chunk from exec output stream`);
+      throw new Error(
+        `unexpected ${typeof chunk} chunk from exec output stream`,
+      );
     };
 
     let outNext: Promise<IteratorResult<unknown>> | null = outIt.next();
@@ -557,7 +569,7 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
   async *lines(): AsyncIterable<string> {
     const stdout = this.session.stdoutPipe;
     if (!stdout) {
-      throw new Error("stdout is not piped (set exec options.stdout=\"pipe\")");
+      throw new Error('stdout is not piped (set exec options.stdout="pipe")');
     }
 
     let buffer = "";
@@ -585,7 +597,11 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
     return this.session.stderrPipe;
   }
 
-  attach(stdin: NodeJS.ReadStream, stdout: NodeJS.WriteStream, stderr?: NodeJS.WriteStream): void {
+  attach(
+    stdin: NodeJS.ReadStream,
+    stdout: NodeJS.WriteStream,
+    stderr?: NodeJS.WriteStream,
+  ): void {
     if (this.attached) {
       throw new Error("already attached");
     }
@@ -601,10 +617,11 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
 
     if (!shouldForwardStdout && !shouldForwardStderr) {
       const hasLiveOutput =
-        this.session.stdoutMode.mode === "writable" || this.session.stderrMode.mode === "writable";
+        this.session.stdoutMode.mode === "writable" ||
+        this.session.stderrMode.mode === "writable";
       if (!hasLiveOutput) {
         throw new Error(
-          "attach() requires streaming output (set exec options stdout/stderr=\"pipe\" or \"inherit\")"
+          'attach() requires streaming output (set exec options stdout/stderr="pipe" or "inherit")',
         );
       }
     }
@@ -619,7 +636,7 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
         write: (chunk) => this.write(chunk),
         end: () => this.end(),
         resize: (rows, cols) => this.resize(rows, cols),
-      }
+      },
     );
 
     void this.session.resultPromise.then(
@@ -631,7 +648,7 @@ export class ExecProcess implements PromiseLike<ExecResult>, AsyncIterable<strin
       },
       () => {
         cleanup();
-      }
+      },
     );
   }
 }
@@ -645,7 +662,7 @@ export function createExecSession(
     stdout: ResolvedExecOutputMode;
     stderr: ResolvedExecOutputMode;
     windowBytes?: number;
-  }
+  },
 ): ExecSession {
   let resolve!: (result: ExecResult) => void;
   let reject!: (error: Error) => void;
@@ -709,7 +726,10 @@ function refillPipeWindow(session: ExecSession, stream: "stdout" | "stderr") {
   if (!pipe) return;
 
   // Keep guest credit aligned with host-side pipe buffering.
-  const targetCredit = Math.max(0, session.windowBytes - pipe.getBufferedBytes());
+  const targetCredit = Math.max(
+    0,
+    session.windowBytes - pipe.getBufferedBytes(),
+  );
 
   const advertisedCredit =
     stream === "stdout"
@@ -724,7 +744,10 @@ function refillPipeWindow(session: ExecSession, stream: "stdout" | "stderr") {
 
 function updateThreshold(session: ExecSession): number {
   // Coalesce updates, but ensure small windows still make progress.
-  return Math.max(1024, Math.min(MIN_WINDOW_UPDATE_BYTES, Math.floor(session.windowBytes / 2)));
+  return Math.max(
+    1024,
+    Math.min(MIN_WINDOW_UPDATE_BYTES, Math.floor(session.windowBytes / 2)),
+  );
 }
 
 function flushWindowUpdates(session: ExecSession) {
@@ -743,7 +766,11 @@ function flushWindowUpdates(session: ExecSession) {
   session.sendWindowUpdate(stdoutBytes, stderrBytes);
 }
 
-function queueWindowUpdate(session: ExecSession, stream: "stdout" | "stderr", bytes: number) {
+function queueWindowUpdate(
+  session: ExecSession,
+  stream: "stdout" | "stderr",
+  bytes: number,
+) {
   if (!session.sendWindowUpdate) return;
   if (!Number.isFinite(bytes) || bytes <= 0) return;
 
@@ -763,14 +790,18 @@ function queueWindowUpdate(session: ExecSession, stream: "stdout" | "stderr", by
   }
 }
 
-export function finishExecSession(session: ExecSession, exitCode: number, signal?: number): void {
+export function finishExecSession(
+  session: ExecSession,
+  exitCode: number,
+  signal?: number,
+): void {
   const result = new ExecResult(
     session.id,
     exitCode,
     Buffer.concat(session.stdoutChunks),
     Buffer.concat(session.stderrChunks),
     signal,
-    session.encoding
+    session.encoding,
   );
 
   session.stdoutPipe?.endStream();
@@ -798,7 +829,7 @@ function failWritableOutput(
   session: ExecSession,
   stream: "stdout" | "stderr",
   err: unknown,
-  extraBytes: number
+  extraBytes: number,
 ) {
   // Switch to ignore mode to avoid deadlocks (we still grant credits back)
   if (stream === "stdout") {
@@ -822,13 +853,23 @@ function failWritableOutput(
   if (!session.outputWriteError) {
     session.outputWriteError = error;
 
-    const wrapped: any = new Error(`${stream} output write failed: ${error.message}`);
+    const wrapped: any = new Error(
+      `${stream} output write failed: ${error.message}`,
+    );
     wrapped.cause = error;
 
     // Preserve stable identifiers on common Node.js system errors (EPIPE, etc.)
     const src: any = error as any;
     const dst: any = wrapped as any;
-    for (const key of ["code", "errno", "syscall", "path", "address", "port", "dest"]) {
+    for (const key of [
+      "code",
+      "errno",
+      "syscall",
+      "path",
+      "address",
+      "port",
+      "dest",
+    ]) {
       if (src && src[key] !== undefined) dst[key] = src[key];
     }
 
@@ -836,7 +877,11 @@ function failWritableOutput(
   }
 }
 
-export function applyOutputChunk(session: ExecSession, stream: "stdout" | "stderr", data: Buffer) {
+export function applyOutputChunk(
+  session: ExecSession,
+  stream: "stdout" | "stderr",
+  data: Buffer,
+) {
   // Update credit accounting (credits represent what the guest can still send)
   if (stream === "stdout") {
     session.stdoutCredit = Math.max(0, session.stdoutCredit - data.length);
@@ -927,7 +972,11 @@ export function applyOutputChunk(session: ExecSession, stream: "stdout" | "stder
           });
         } else {
           // Unknown writable implementation: avoid deadlocking by treating as consumed.
-          queueWindowUpdate(session, "stdout", session.stdoutWritableBlockedBytes);
+          queueWindowUpdate(
+            session,
+            "stdout",
+            session.stdoutWritableBlockedBytes,
+          );
           session.stdoutWritableBlockedBytes = 0;
           session.stdoutWritableBlocked = false;
           flushWindowUpdates(session);
@@ -949,7 +998,11 @@ export function applyOutputChunk(session: ExecSession, stream: "stdout" | "stder
           });
         } else {
           // Unknown writable implementation: avoid deadlocking by treating as consumed.
-          queueWindowUpdate(session, "stderr", session.stderrWritableBlockedBytes);
+          queueWindowUpdate(
+            session,
+            "stderr",
+            session.stderrWritableBlockedBytes,
+          );
           session.stderrWritableBlockedBytes = 0;
           session.stderrWritableBlocked = false;
           flushWindowUpdates(session);

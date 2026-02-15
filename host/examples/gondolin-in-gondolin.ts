@@ -33,7 +33,12 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { VM, loadGuestAssets, RealFSProvider, ReadonlyProvider } from "../dist/src/index.js";
+import {
+  VM,
+  loadGuestAssets,
+  RealFSProvider,
+  ReadonlyProvider,
+} from "../dist/src/index.js";
 
 type GuestAssets = {
   kernelPath: string;
@@ -47,7 +52,7 @@ function requireEnv(name: string): string {
     throw new Error(
       `${name} is required\n` +
         `Example:\n` +
-        `  ${name}=./tmp/nested-outer pnpm exec tsx examples/gondolin-in-gondolin.ts`
+        `  ${name}=./tmp/nested-outer pnpm exec tsx examples/gondolin-in-gondolin.ts`,
     );
   }
   return value;
@@ -60,7 +65,7 @@ function resolveAssetDir(assets: GuestAssets): string {
 
   if (kernelDir !== initrdDir || kernelDir !== rootfsDir) {
     throw new Error(
-      "guest assets are not colocated in one directory; please provide a directory via GONDOLIN_INNER_GUEST_DIR"
+      "guest assets are not colocated in one directory; please provide a directory via GONDOLIN_INNER_GUEST_DIR",
     );
   }
 
@@ -144,18 +149,22 @@ function buildInnerRunnerScript() {
 }
 
 async function installNestedCommand(outerVm: VM) {
-  await outerVm.exec(["/bin/sh", "-lc", "mkdir -p /usr/bin /usr/local/bin /usr/local/lib/gondolin"]);
+  await outerVm.exec([
+    "/bin/sh",
+    "-lc",
+    "mkdir -p /usr/bin /usr/local/bin /usr/local/lib/gondolin",
+  ]);
 
   await outerVm.writeFile(
     "/usr/local/lib/gondolin/run-inner-bash.js",
-    buildInnerRunnerScript()
+    buildInnerRunnerScript(),
   );
 
   // Alpine's /bin/bash default PATH typically omits /usr/local/bin, so install
   // the command into /usr/bin and keep /usr/local/bin as a convenience symlink.
   await outerVm.writeFile(
     "/usr/bin/gondolin-bash",
-    "#!/bin/sh\nexec node /usr/local/lib/gondolin/run-inner-bash.js \"$@\"\n"
+    '#!/bin/sh\nexec node /usr/local/lib/gondolin/run-inner-bash.js "$@"\n',
   );
 
   const chmodResult = await outerVm.exec([
@@ -165,11 +174,18 @@ async function installNestedCommand(outerVm: VM) {
   ]);
 
   if (!chmodResult.ok) {
-    throw new Error(`failed to install gondolin-bash: ${chmodResult.stderr || "chmod failed"}`);
+    throw new Error(
+      `failed to install gondolin-bash: ${chmodResult.stderr || "chmod failed"}`,
+    );
   }
 }
 
-async function runNestedCommand(outerVm: VM, command: string, innerMemory: string, innerCpus: number) {
+async function runNestedCommand(
+  outerVm: VM,
+  command: string,
+  innerMemory: string,
+  innerCpus: number,
+) {
   const wrapped = `gondolin-bash /bin/sh -lc ${shQuote(command)}`;
   const result = await outerVm.exec(["/bin/sh", "-lc", wrapped], {
     env: {
@@ -206,7 +222,7 @@ async function main() {
       `Host package build output missing: ${hostDistEntry}\n` +
         `Run:\n` +
         `  cd host\n` +
-        `  pnpm build`
+        `  pnpm build`,
     );
   }
 
@@ -228,8 +244,12 @@ async function main() {
     cpus: outerCpus,
     vfs: {
       mounts: {
-        "/opt/gondolin-host": new ReadonlyProvider(new RealFSProvider(hostPackageDir)),
-        "/inner-assets": new ReadonlyProvider(new RealFSProvider(innerGuestDir)),
+        "/opt/gondolin-host": new ReadonlyProvider(
+          new RealFSProvider(hostPackageDir),
+        ),
+        "/inner-assets": new ReadonlyProvider(
+          new RealFSProvider(innerGuestDir),
+        ),
       },
     },
   });

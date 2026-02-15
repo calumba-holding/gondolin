@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 // internalBinding shim - native bindings used by Node.js internals
 
@@ -29,7 +29,7 @@ const bindings = {
   sea: {
     isSea: () => false,
     getAsset: () => {
-      throw new Error('Not a SEA');
+      throw new Error("Not a SEA");
     },
     getAssetKeys: () => [],
   },

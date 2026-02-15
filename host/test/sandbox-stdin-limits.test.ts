@@ -38,8 +38,8 @@ function makeTempAssetsDir(): string {
         },
       },
       null,
-      2
-    )
+      2,
+    ),
   );
 
   return dir;
@@ -55,7 +55,9 @@ test("resolveSandboxServerOptions ensures queued stdin caps are >= maxStdinBytes
     });
 
     assert.ok(resolved.maxQueuedStdinBytes >= resolved.maxStdinBytes);
-    assert.ok(resolved.maxTotalQueuedStdinBytes >= resolved.maxQueuedStdinBytes);
+    assert.ok(
+      resolved.maxTotalQueuedStdinBytes >= resolved.maxQueuedStdinBytes,
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

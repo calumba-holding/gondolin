@@ -3,7 +3,7 @@ export class XorShift32 {
 
   constructor(seed: number) {
     // Avoid the all-zero state
-    this.state = (seed >>> 0) || 0x12345678;
+    this.state = seed >>> 0 || 0x12345678;
   }
 
   nextU32(): number {

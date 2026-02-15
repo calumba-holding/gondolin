@@ -29,7 +29,9 @@ afterEach(() => {
 });
 
 test("assets: loadAssetManifest returns null for missing/invalid manifest", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-assets-manifest-"));
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "gondolin-assets-manifest-"),
+  );
   try {
     assert.equal(loadAssetManifest(dir), null);
 
@@ -41,18 +43,27 @@ test("assets: loadAssetManifest returns null for missing/invalid manifest", () =
 });
 
 test("assets: loadAssetManifest parses valid manifest", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-assets-manifest-"));
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "gondolin-assets-manifest-"),
+  );
   try {
     const checksums = { kernel: "", initramfs: "", rootfs: "" };
     const manifest = {
       version: 1,
       buildId: computeAssetBuildId({ checksums, arch: "aarch64" }),
-      config: { arch: "aarch64", distro: "alpine", alpine: { version: "3.23.0" } },
+      config: {
+        arch: "aarch64",
+        distro: "alpine",
+        alpine: { version: "3.23.0" },
+      },
       buildTime: new Date().toISOString(),
       assets: { kernel: "k", initramfs: "i", rootfs: "r" },
       checksums,
     };
-    fs.writeFileSync(path.join(dir, MANIFEST_FILENAME), JSON.stringify(manifest));
+    fs.writeFileSync(
+      path.join(dir, MANIFEST_FILENAME),
+      JSON.stringify(manifest),
+    );
 
     const parsed = loadAssetManifest(dir);
     assert.ok(parsed);
@@ -87,12 +98,23 @@ test("assets: loadGuestAssets uses manifest filenames and validates existence", 
   try {
     const manifest = {
       version: 1,
-      config: { arch: "aarch64", distro: "alpine", alpine: { version: "3.23.0" } },
+      config: {
+        arch: "aarch64",
+        distro: "alpine",
+        alpine: { version: "3.23.0" },
+      },
       buildTime: new Date().toISOString(),
-      assets: { kernel: "kernel.bin", initramfs: "initrd.bin", rootfs: "rootfs.img" },
+      assets: {
+        kernel: "kernel.bin",
+        initramfs: "initrd.bin",
+        rootfs: "rootfs.img",
+      },
       checksums: { kernel: "", initramfs: "", rootfs: "" },
     };
-    fs.writeFileSync(path.join(dir, MANIFEST_FILENAME), JSON.stringify(manifest));
+    fs.writeFileSync(
+      path.join(dir, MANIFEST_FILENAME),
+      JSON.stringify(manifest),
+    );
 
     // missing should throw
     assert.throws(() => loadGuestAssets(dir), /Missing guest assets/);
@@ -165,7 +187,9 @@ test("assets: ensureGuestAssets with GONDOLIN_GUEST_DIR does not download", asyn
 });
 
 test("assets: downloadAndExtract downloads to temp file and cleans it up", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-assets-download-"));
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "gondolin-assets-download-"),
+  );
 
   try {
     const bundleName = __test.getAssetBundleName();
@@ -210,7 +234,9 @@ test("assets: downloadAndExtract downloads to temp file and cleans it up", async
 });
 
 test("assets: downloadAndExtract throws on non-ok response", async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-assets-download-"));
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "gondolin-assets-download-"),
+  );
   try {
     // Suppress progress output from downloadAndExtract.
     mock.method(process.stderr, "write", () => true);
@@ -219,7 +245,10 @@ test("assets: downloadAndExtract throws on non-ok response", async () => {
       return new Response("no", { status: 404, statusText: "Not Found" });
     });
 
-    await assert.rejects(() => __test.downloadAndExtract(dir), /Failed to download guest image/);
+    await assert.rejects(
+      () => __test.downloadAndExtract(dir),
+      /Failed to download guest image/,
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

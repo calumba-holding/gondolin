@@ -2,7 +2,12 @@ import assert from "node:assert/strict";
 import { execFileSync, execFile } from "node:child_process";
 import test from "node:test";
 
-import { closeVm, withVm, shouldSkipVmTests, scheduleForceExit } from "./helpers/vm-fixture";
+import {
+  closeVm,
+  withVm,
+  shouldSkipVmTests,
+  scheduleForceExit,
+} from "./helpers/vm-fixture";
 
 const skipVmTests = shouldSkipVmTests();
 const timeoutMs = Number(process.env.WS_TIMEOUT ?? 120000);
@@ -42,7 +47,9 @@ test(
           "command -v sshd >/dev/null 2>&1 && command -v sandboxssh >/dev/null 2>&1 && ps | grep -q '[s]andboxssh'",
         ]);
         if (probe.exitCode !== 0) {
-          t.skip("guest image does not include sshd/sandboxssh or sandboxssh is not running");
+          t.skip(
+            "guest image does not include sshd/sandboxssh or sandboxssh is not running",
+          );
           return;
         }
 
@@ -80,14 +87,14 @@ test(
             (err, stdout) => {
               if (err) reject(err);
               else resolve(stdout);
-            }
+            },
           );
         });
 
         assert.equal(stdout.trim(), "ssh-ok");
 
         await access.close();
-      }
+      },
     );
-  }
+  },
 );

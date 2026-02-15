@@ -7,7 +7,10 @@ import { ERRNO, isWriteFlag, VirtualProviderClass } from "./utils";
  * Wraps a VirtualProvider and makes it read-only by blocking all write operations.
  * Useful for mounting host directories in read-only mode.
  */
-export class ReadonlyProvider extends VirtualProviderClass implements VirtualProvider {
+export class ReadonlyProvider
+  extends VirtualProviderClass
+  implements VirtualProvider
+{
   constructor(private readonly backend: VirtualProvider) {
     super();
   }
@@ -161,11 +164,21 @@ export class ReadonlyProvider extends VirtualProviderClass implements VirtualPro
   }
 
   watchAsync(path: string, options?: object) {
-    return this.backend.watchAsync?.(path, options) ?? super.watchAsync(path, options);
+    return (
+      this.backend.watchAsync?.(path, options) ??
+      super.watchAsync(path, options)
+    );
   }
 
-  watchFile(path: string, options?: object, listener?: (...args: unknown[]) => void) {
-    return this.backend.watchFile?.(path, options, listener) ?? super.watchFile(path, options);
+  watchFile(
+    path: string,
+    options?: object,
+    listener?: (...args: unknown[]) => void,
+  ) {
+    return (
+      this.backend.watchFile?.(path, options, listener) ??
+      super.watchFile(path, options)
+    );
   }
 
   unwatchFile(path: string, listener?: (...args: unknown[]) => void) {

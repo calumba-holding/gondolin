@@ -1115,8 +1115,7 @@ test("qemu-net: websocket upstream header read times out", async () => {
     });
 
     await assert.rejects(
-      () =>
-        qemuWs.readUpstreamHttpResponseHead(backend, socket as net.Socket),
+      () => qemuWs.readUpstreamHttpResponseHead(backend, socket as net.Socket),
       /websocket upstream header timeout/i,
     );
   } finally {
@@ -2091,7 +2090,10 @@ test("qemu-net: ssh flows can be enabled on non-standard ports via host:port all
     dstPort: 443,
   });
 
-  assert.equal(isSshFlowAllowed(backend, "tcp-ssh-443", sshGithubIp, 443), true);
+  assert.equal(
+    isSshFlowAllowed(backend, "tcp-ssh-443", sshGithubIp, 443),
+    true,
+  );
   assert.equal(
     (backend as any).tcpSessions.get("tcp-ssh-443").connectIP,
     "ssh.github.com",

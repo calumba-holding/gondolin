@@ -181,7 +181,9 @@ export type QemuSshInternals = {
   /** guest-facing ssh host key */
   hostKey: string | null;
   /** upstream host key verifier callback */
-  hostVerifier: ((hostname: string, key: Buffer, port: number) => boolean) | null;
+  hostVerifier:
+    | ((hostname: string, key: Buffer, port: number) => boolean)
+    | null;
   /** allow/deny callback for guest ssh exec requests */
   execPolicy: SshExecPolicy | null;
 
@@ -226,7 +228,9 @@ export function createQemuSshInternals(options?: SshOptions): QemuSshInternals {
     !hostVerifier &&
     (agent || credentials.length > 0)
   ) {
-    const knownHostsFiles = normalizeSshKnownHostsFiles(options?.knownHostsFile);
+    const knownHostsFiles = normalizeSshKnownHostsFiles(
+      options?.knownHostsFile,
+    );
     try {
       hostVerifier = createOpenSshKnownHostsHostVerifier(knownHostsFiles);
     } catch (err) {
@@ -268,9 +272,7 @@ export function createQemuSshInternals(options?: SshOptions): QemuSshInternals {
     options?.upstreamKeepaliveIntervalMs ??
     DEFAULT_SSH_UPSTREAM_KEEPALIVE_INTERVAL_MS;
   if (!Number.isInteger(keepaliveIntervalMs) || keepaliveIntervalMs < 0) {
-    throw new Error(
-      "ssh.upstreamKeepaliveIntervalMs must be an integer >= 0",
-    );
+    throw new Error("ssh.upstreamKeepaliveIntervalMs must be an integer >= 0");
   }
 
   const keepaliveCountMax =
@@ -281,7 +283,6 @@ export function createQemuSshInternals(options?: SshOptions): QemuSshInternals {
   }
 
   const enabled = allowedTargets.length > 0;
-
 
   return {
     enabled,
@@ -393,7 +394,10 @@ export function isSshFlowAllowed(
   return true;
 }
 
-function closeSshProxySession(backend: QemuNetworkBackend, proxy?: SshProxySession) {
+function closeSshProxySession(
+  backend: QemuNetworkBackend,
+  proxy?: SshProxySession,
+) {
   if (!proxy) return;
   try {
     proxy.connection?.end();
@@ -426,7 +430,10 @@ function closeSshProxySession(backend: QemuNetworkBackend, proxy?: SshProxySessi
 }
 
 /** @internal */
-export function cleanupSshTcpSession(backend: QemuNetworkBackend, session: TcpSession) {
+export function cleanupSshTcpSession(
+  backend: QemuNetworkBackend,
+  session: TcpSession,
+) {
   if (!session.ssh) return;
   closeSshProxySession(backend, session.ssh.proxy);
   session.ssh = undefined;
@@ -576,7 +583,10 @@ function attachSshSessionHandlers(options: {
     }).catch((err) => {
       try {
         guestChannel.stderr.write(
-          Buffer.from(`gondolin ssh proxy error: ${formatError(err)}\n`, "utf8"),
+          Buffer.from(
+            `gondolin ssh proxy error: ${formatError(err)}\n`,
+            "utf8",
+          ),
         );
       } catch {
         // ignore
@@ -823,7 +833,11 @@ export async function bridgeSshExecChannel(options: {
   });
 
   upstream.on("error", (err: Error) => {
-    backend.abortTcpSession(key, session, `ssh-upstream-error (${formatError(err)})`);
+    backend.abortTcpSession(
+      key,
+      session,
+      `ssh-upstream-error (${formatError(err)})`,
+    );
   });
 }
 

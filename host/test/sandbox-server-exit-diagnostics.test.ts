@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SandboxServer, type ResolvedSandboxServerOptions } from "../src/sandbox-server";
+import {
+  SandboxServer,
+  type ResolvedSandboxServerOptions,
+} from "../src/sandbox-server";
 
 function makeResolvedOptions(
-  overrides: Partial<ResolvedSandboxServerOptions> = {}
+  overrides: Partial<ResolvedSandboxServerOptions> = {},
 ): ResolvedSandboxServerOptions {
   return {
     qemuPath: "/bin/false",

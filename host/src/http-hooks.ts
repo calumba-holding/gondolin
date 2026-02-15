@@ -3,6 +3,7 @@ import net from "net";
 
 import type { HttpHookRequest, HttpHooks } from "./qemu-net";
 import { HttpRequestBlockedError } from "./http-utils";
+import { extractIPv4Mapped, parseIPv6Hextets } from "./ip-utils";
 
 export type SecretDefinition = {
   /** host patterns this secret may be sent to */
@@ -479,73 +480,6 @@ function isPrivateIPv6(ip: string): boolean {
   if (mapped && isPrivateIPv4(mapped)) return true;
 
   return false;
-}
-
-function parseIPv6Hextets(ip: string): number[] | null {
-  const normalized = ip.toLowerCase();
-  const splitIndex = normalized.indexOf("::");
-
-  if (splitIndex !== -1) {
-    const leftPart = normalized.slice(0, splitIndex);
-    const rightPart = normalized.slice(splitIndex + 2);
-    const left = leftPart ? leftPart.split(":") : [];
-    const right = rightPart ? rightPart.split(":") : [];
-    const leftExpanded = expandIpv6Parts(left);
-    const rightExpanded = expandIpv6Parts(right);
-    if (!leftExpanded || !rightExpanded) return null;
-
-    const missing = 8 - (leftExpanded.length + rightExpanded.length);
-    if (missing < 0) return null;
-
-    return [...leftExpanded, ...Array(missing).fill(0), ...rightExpanded];
-  }
-
-  const parts = normalized.split(":");
-  const expanded = expandIpv6Parts(parts);
-  if (!expanded || expanded.length !== 8) return null;
-  return expanded;
-}
-
-function expandIpv6Parts(parts: string[]): number[] | null {
-  const expanded: number[] = [];
-
-  for (const part of parts) {
-    if (part.includes(".")) {
-      const ipv4 = parseIPv4ToHextets(part);
-      if (!ipv4) return null;
-      expanded.push(...ipv4);
-      continue;
-    }
-
-    if (part.length === 0) continue;
-    const value = parseInt(part, 16);
-    if (!Number.isFinite(value) || value < 0 || value > 0xffff) return null;
-    expanded.push(value);
-  }
-
-  return expanded;
-}
-
-function parseIPv4ToHextets(ip: string): number[] | null {
-  const octets = ip.split(".").map((part) => Number(part));
-  if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part))) {
-    return null;
-  }
-  const [a, b, c, d] = octets;
-  if ([a, b, c, d].some((part) => part < 0 || part > 255)) return null;
-  return [(a << 8) | b, (c << 8) | d];
-}
-
-function extractIPv4Mapped(hextets: number[]): string | null {
-  if (hextets.length !== 8) return null;
-  const prefixZero = hextets.slice(0, 5).every((value) => value === 0);
-  if (!prefixZero || hextets[5] !== 0xffff) return null;
-
-  const a = hextets[6] >> 8;
-  const b = hextets[6] & 0xff;
-  const c = hextets[7] >> 8;
-  const d = hextets[7] & 0xff;
-  return `${a}.${b}.${c}.${d}`;
 }
 
 function uniqueHosts(hosts: string[]): string[] {
