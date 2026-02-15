@@ -5,6 +5,9 @@ import path from "path";
 import { execFileSync } from "child_process";
 import { Duplex, Readable } from "stream";
 
+import { toBufferIterable } from "./buffer-iter";
+import { AsyncSingleflight } from "./async-utils";
+
 import {
   createTempQcow2Overlay,
   ensureQemuImgAvailable,
@@ -289,8 +292,8 @@ export class VM {
   private readonly defaultEnv: EnvInput | undefined;
   private connection: SandboxConnection | null = null;
   private connectPromise: Promise<void> | null = null;
-  private startPromise: Promise<void> | null = null;
-  private closePromise: Promise<void> | null = null;
+  private readonly startSingleflight = new AsyncSingleflight<void>();
+  private readonly closeSingleflight = new AsyncSingleflight<void>();
   private statusPromise: Promise<SandboxState> | null = null;
   private statusResolve: ((state: SandboxState) => void) | null = null;
   private statusReject: ((error: Error) => void) | null = null;
@@ -595,26 +598,14 @@ export class VM {
    * If VFS is configured, this also waits for the VFS mount(s) to be ready.
    */
   async start() {
-    if (this.startPromise) return this.startPromise;
-
-    this.startPromise = this.startInternal().finally(() => {
-      this.startPromise = null;
-    });
-
-    return this.startPromise;
+    return this.startSingleflight.run(() => this.startInternal());
   }
 
   /**
    * Close the VM and release associated resources.
    */
   async close() {
-    if (this.closePromise) return this.closePromise;
-
-    this.closePromise = this.closeInternal().finally(() => {
-      this.closePromise = null;
-    });
-
-    return this.closePromise;
+    return this.closeSingleflight.run(() => this.closeInternal());
   }
 
   /**
@@ -953,7 +944,7 @@ export class VM {
     const handle = await vfs.open(filePath, "w");
     try {
       let position = 0;
-      for await (const chunk of toFileBufferIterable(input)) {
+      for await (const chunk of toBufferIterable(input)) {
         assertNotAborted(signal, "file write aborted");
 
         let offset = 0;
@@ -2204,55 +2195,6 @@ function assertNotAborted(
   if (signal?.aborted) {
     throw new Error(message);
   }
-}
-
-async function* toFileBufferIterable(
-  input: VmWriteFileInput,
-): AsyncIterable<Buffer> {
-  if (typeof input === "string") {
-    yield Buffer.from(input, "utf-8");
-    return;
-  }
-
-  if (Buffer.isBuffer(input)) {
-    yield input;
-    return;
-  }
-
-  if (input instanceof Uint8Array) {
-    yield Buffer.from(input);
-    return;
-  }
-
-  if (input instanceof Readable) {
-    for await (const chunk of input) {
-      if (typeof chunk === "string") {
-        yield Buffer.from(chunk, "utf-8");
-      } else if (Buffer.isBuffer(chunk)) {
-        yield chunk;
-      } else if (chunk instanceof Uint8Array) {
-        yield Buffer.from(chunk);
-      } else {
-        throw new Error("unsupported readable chunk type");
-      }
-    }
-    return;
-  }
-
-  if (typeof (input as any)?.[Symbol.asyncIterator] === "function") {
-    for await (const chunk of input as AsyncIterable<Buffer | Uint8Array>) {
-      if (Buffer.isBuffer(chunk)) {
-        yield chunk;
-      } else if (chunk instanceof Uint8Array) {
-        yield Buffer.from(chunk);
-      } else {
-        throw new Error("unsupported async iterable chunk type");
-      }
-    }
-    return;
-  }
-
-  throw new Error("unsupported write input type");
 }
 
 type ResolvedVfs = {

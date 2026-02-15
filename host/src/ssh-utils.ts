@@ -4,6 +4,9 @@ import os from "os";
 import path from "path";
 
 import type { SshCredential } from "./qemu-ssh";
+import { matchHostname, normalizeHostnamePattern } from "./host-patterns";
+
+export { matchHostname, normalizeHostnamePattern };
 
 export type SshAllowedTarget = {
   /** normalized host pattern */
@@ -33,22 +36,6 @@ export function generateSshHostKey(): string {
     publicKeyEncoding: { format: "pem", type: "spki" },
   });
   return privateKey;
-}
-
-export function normalizeHostnamePattern(pattern: string): string {
-  return pattern.trim().toLowerCase();
-}
-
-export function matchHostname(hostname: string, pattern: string): boolean {
-  if (!pattern) return false;
-  if (pattern === "*") return true;
-
-  const escaped = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  const regex = new RegExp(`^${escaped}$`, "i");
-  return regex.test(hostname);
 }
 
 export function parseSshTargetPattern(raw: string): SshAllowedTarget | null {

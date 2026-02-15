@@ -9,10 +9,13 @@ import type {
   TcpSession,
 } from "./qemu-net";
 
+import {
+  MAX_HTTP_HEADER_BYTES,
+  isWebSocketUpgradeRequestHeaders,
+  sendHttpResponse,
+  sendHttpResponseHead,
+} from "./http-utils";
 import type { HttpRequestData } from "./http-utils";
-
-// Keep in sync with qemu-http MAX_HTTP_HEADER_BYTES
-const MAX_HTTP_HEADER_BYTES = 64 * 1024;
 
 export type WebSocketState = {
   /** current websocket state */
@@ -98,59 +101,7 @@ export function handleWebSocketClientData(
 }
 
 export function isWebSocketUpgradeRequest(request: HttpRequestData): boolean {
-  const upgrade = request.headers["upgrade"]?.toLowerCase() ?? "";
-  if (upgrade === "websocket") return true;
-
-  // Some clients omit Upgrade/Connection but include the WebSocket-specific headers.
-  if (
-    request.headers["sec-websocket-key"] ||
-    request.headers["sec-websocket-version"]
-  )
-    return true;
-
-  return false;
-}
-
-function sendHttpResponseHead(
-  write: (chunk: Buffer) => void,
-  response: {
-    status: number;
-    statusText: string;
-    headers: HttpResponseHeaders;
-  },
-  httpVersion: "HTTP/1.0" | "HTTP/1.1" = "HTTP/1.1",
-) {
-  const statusLine = `${httpVersion} ${response.status} ${response.statusText}\r\n`;
-
-  const headerLines: string[] = [];
-  for (const [rawName, rawValue] of Object.entries(response.headers)) {
-    const name = rawName.replace(/[\r\n:]+/g, "");
-    if (!name) continue;
-
-    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-    for (const v of values) {
-      const value = String(v).replace(/[\r\n]+/g, " ");
-      headerLines.push(`${name}: ${value}`);
-    }
-  }
-
-  let headerBlock = statusLine;
-  if (headerLines.length > 0) {
-    headerBlock += headerLines.join("\r\n") + "\r\n";
-  }
-  headerBlock += "\r\n";
-  write(Buffer.from(headerBlock));
-}
-
-function sendHttpResponse(
-  write: (chunk: Buffer) => void,
-  response: HttpHookResponse,
-  httpVersion: "HTTP/1.0" | "HTTP/1.1" = "HTTP/1.1",
-) {
-  sendHttpResponseHead(write, response, httpVersion);
-  if (response.body.length > 0) {
-    write(response.body);
-  }
+  return isWebSocketUpgradeRequestHeaders(request.headers);
 }
 
 export async function bridgeWebSocketUpgrade(

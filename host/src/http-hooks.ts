@@ -4,6 +4,7 @@ import net from "net";
 import type { HttpHookRequest, HttpHooks } from "./qemu-net";
 import { HttpRequestBlockedError } from "./http-utils";
 import { extractIPv4Mapped, parseIPv6Hextets } from "./ip-utils";
+import { matchesAnyHost, normalizeHostnamePattern } from "./host-patterns";
 
 export type SecretDefinition = {
   /** host patterns this secret may be sent to */
@@ -416,27 +417,6 @@ function assertSecretAllowedForHost(
   throw new HttpRequestBlockedError(
     `secret ${entry.name} not allowed for host: ${hostname || "unknown"}`,
   );
-}
-
-function matchesAnyHost(hostname: string, patterns: string[]): boolean {
-  const normalized = hostname.toLowerCase();
-  return patterns.some((pattern) => matchHostname(normalized, pattern));
-}
-
-function normalizeHostnamePattern(pattern: string): string {
-  return pattern.trim().toLowerCase();
-}
-
-function matchHostname(hostname: string, pattern: string): boolean {
-  if (!pattern) return false;
-  if (pattern === "*") return true;
-
-  const escaped = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  const regex = new RegExp(`^${escaped}$`, "i");
-  return regex.test(hostname);
 }
 
 function isInternalAddress(ip: string): boolean {

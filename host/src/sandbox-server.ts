@@ -7,6 +7,8 @@ import { EventEmitter } from "events";
 import { Duplex, PassThrough, Readable } from "stream";
 
 import { getHostNodeArchCached } from "./host-arch";
+import { AsyncSingleflight } from "./async-utils";
+import { toBufferIterable } from "./buffer-iter";
 
 import {
   FrameReader,
@@ -1043,8 +1045,8 @@ export class SandboxServer extends EventEmitter {
   private bridgeWritableWaiters: BridgeWritableWaiter[] = [];
   private execWindowFlushScheduled = false;
   private execIoFlushScheduled = false;
-  private startPromise: Promise<void> | null = null;
-  private closePromise: Promise<void> | null = null;
+  private readonly startSingleflight = new AsyncSingleflight<void>();
+  private readonly closeSingleflight = new AsyncSingleflight<void>();
   private started = false;
   private qemuStdoutBuffer = "";
   private qemuStderrBuffer = "";
@@ -2220,23 +2222,11 @@ export class SandboxServer extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    if (this.startPromise) return this.startPromise;
-
-    this.startPromise = this.startInternal().finally(() => {
-      this.startPromise = null;
-    });
-
-    return this.startPromise;
+    return this.startSingleflight.run(() => this.startInternal());
   }
 
   async close(): Promise<void> {
-    if (this.closePromise) return this.closePromise;
-
-    this.closePromise = this.closeInternal().finally(() => {
-      this.closePromise = null;
-    });
-
-    return this.closePromise;
+    return this.closeSingleflight.run(() => this.closeInternal());
   }
 
   private async startInternal(): Promise<void> {
@@ -3266,62 +3256,4 @@ function buildSandboxfsAppend(baseAppend: string, config: SandboxFsConfig) {
     .filter((piece) => piece.length > 0)
     .join(" ")
     .trim();
-}
-
-async function* toBufferIterable(
-  input:
-    | Buffer
-    | Uint8Array
-    | string
-    | Readable
-    | AsyncIterable<Buffer | Uint8Array | string>,
-): AsyncIterable<Buffer> {
-  if (typeof input === "string") {
-    yield Buffer.from(input, "utf-8");
-    return;
-  }
-
-  if (Buffer.isBuffer(input)) {
-    yield input;
-    return;
-  }
-
-  if (input instanceof Uint8Array) {
-    yield Buffer.from(input);
-    return;
-  }
-
-  if (input instanceof Readable) {
-    for await (const chunk of input) {
-      if (typeof chunk === "string") {
-        yield Buffer.from(chunk, "utf-8");
-      } else if (Buffer.isBuffer(chunk)) {
-        yield chunk;
-      } else if (chunk instanceof Uint8Array) {
-        yield Buffer.from(chunk);
-      } else {
-        throw new Error("unsupported readable chunk type");
-      }
-    }
-    return;
-  }
-
-  if (typeof (input as any)?.[Symbol.asyncIterator] === "function") {
-    for await (const chunk of input as AsyncIterable<
-      Buffer | Uint8Array | string
-    >) {
-      if (typeof chunk === "string") {
-        yield Buffer.from(chunk, "utf-8");
-      } else if (Buffer.isBuffer(chunk)) {
-        yield chunk;
-      } else if (chunk instanceof Uint8Array) {
-        yield Buffer.from(chunk);
-      } else {
-        throw new Error("unsupported async iterable chunk type");
-      }
-    }
-    return;
-  }
-
-  throw new Error("unsupported write input type");
 }

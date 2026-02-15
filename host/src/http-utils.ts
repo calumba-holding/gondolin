@@ -95,10 +95,98 @@ export function parseContentLength(
   return n;
 }
 
+export const MAX_HTTP_HEADER_BYTES = 64 * 1024;
+
+export type HttpWireVersion = "HTTP/1.0" | "HTTP/1.1";
+
+export function renderHttpResponseHead(
+  response: {
+    status: number;
+    statusText: string;
+    headers: HttpResponseHeaders;
+  },
+  httpVersion: HttpWireVersion = "HTTP/1.1",
+): string {
+  const statusLine = `${httpVersion} ${response.status} ${response.statusText}\r\n`;
+
+  const headerLines: string[] = [];
+  for (const [rawName, rawValue] of Object.entries(response.headers)) {
+    const name = rawName.replace(/[\r\n:]+/g, "");
+    if (!name) continue;
+
+    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
+    for (const v of values) {
+      const value = String(v).replace(/[\r\n]+/g, " ");
+      headerLines.push(`${name}: ${value}`);
+    }
+  }
+
+  let headerBlock = statusLine;
+  if (headerLines.length > 0) {
+    headerBlock += headerLines.join("\r\n") + "\r\n";
+  }
+  headerBlock += "\r\n";
+
+  return headerBlock;
+}
+
+export function sendHttpResponseHead(
+  write: (chunk: Buffer) => void,
+  response: {
+    status: number;
+    statusText: string;
+    headers: HttpResponseHeaders;
+  },
+  httpVersion: HttpWireVersion = "HTTP/1.1",
+  encoding: BufferEncoding = "utf8",
+) {
+  const head = renderHttpResponseHead(response, httpVersion);
+  write(Buffer.from(head, encoding));
+}
+
+export function sendHttpResponse(
+  write: (chunk: Buffer) => void,
+  response: {
+    status: number;
+    statusText: string;
+    headers: HttpResponseHeaders;
+    body: Buffer;
+  },
+  httpVersion: HttpWireVersion = "HTTP/1.1",
+  encoding: BufferEncoding = "utf8",
+) {
+  sendHttpResponseHead(write, response, httpVersion, encoding);
+  if (response.body.length > 0) {
+    write(response.body);
+  }
+}
+
+function joinHeaderValue(raw: string | string[] | undefined): string {
+  if (typeof raw === "string") return raw;
+  if (Array.isArray(raw)) return raw.join(",");
+  return "";
+}
+
+export function isWebSocketUpgradeRequestHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): boolean {
+  const upgrade = joinHeaderValue(headers["upgrade"]).toLowerCase();
+  if (upgrade === "websocket") return true;
+
+  // Some clients omit Upgrade/Connection but include the WebSocket-specific headers.
+  if (headers["sec-websocket-key"] || headers["sec-websocket-version"]) {
+    return true;
+  }
+
+  return false;
+}
+
 const HOP_BY_HOP_HEADERS = new Set([
   "connection",
   "keep-alive",
   "proxy-connection",
+  "proxy-authenticate",
+  "proxy-authorization",
   "transfer-encoding",
   "te",
   "trailer",
@@ -138,11 +226,11 @@ export function stripHopByHopHeaders<T extends HeaderValue>(
   return output;
 }
 
-export function stripHopByHopHeadersForWebSocket(
+export function stripHopByHopHeadersForWebSocket<T extends HeaderValue>(
   this: any,
-  headers: Record<string, string>,
-): Record<string, string> {
-  const out: Record<string, string> = { ...headers };
+  headers: Record<string, T>,
+): Record<string, T> {
+  const out: Record<string, T> = { ...headers };
 
   // Unlike normal HTTP proxying, WebSocket handshakes require forwarding Connection/Upgrade
   // Still strip proxy-only and framing hop-by-hop headers
@@ -161,7 +249,12 @@ export function stripHopByHopHeadersForWebSocket(
   delete out["trailer"];
 
   // Apply Connection: token stripping, but keep Upgrade + WebSocket-specific headers
-  const connection = out["connection"]?.toLowerCase() ?? "";
+  const connectionValue = out["connection"];
+  const connection = Array.isArray(connectionValue)
+    ? connectionValue.join(",")
+    : typeof connectionValue === "string"
+      ? connectionValue
+      : "";
   const tokens = connection
     .split(",")
     .map((t) => t.trim().toLowerCase())
@@ -183,20 +276,20 @@ export function stripHopByHopHeadersForWebSocket(
   return out;
 }
 
-type LookupEntry = {
+export type LookupEntry = {
   address: string;
   family: 4 | 6;
 };
 
-type LookupResult = string | dns.LookupAddress[];
+export type LookupResult = string | dns.LookupAddress[];
 
-type LookupCallback = (
+export type LookupCallback = (
   err: NodeJS.ErrnoException | null,
   address: LookupResult,
   family?: number,
 ) => void;
 
-type LookupFn = (
+export type LookupFn = (
   hostname: string,
   options: dns.LookupOneOptions | dns.LookupAllOptions,
   callback: (

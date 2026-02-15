@@ -9,22 +9,18 @@ import type { Duplex, Writable } from "stream";
 
 import type { VirtualProvider } from "./vfs/node";
 import type { SandboxServer } from "./sandbox-server";
-import { parseContentLength, parseHeaderLines } from "./http-utils";
+import {
+  isWebSocketUpgradeRequestHeaders,
+  MAX_HTTP_HEADER_BYTES,
+  parseContentLength,
+  parseHeaderLines,
+  sendHttpResponse,
+  sendHttpResponseHead,
+  stripHopByHopHeaders,
+  stripHopByHopHeadersForWebSocket,
+} from "./http-utils";
 
 const MAX_LISTENERS_FILE_BYTES = 64 * 1024;
-const MAX_HTTP_HEADER_BYTES = 64 * 1024;
-
-const HOP_BY_HOP_HEADERS = new Set([
-  "connection",
-  "keep-alive",
-  "proxy-connection",
-  "proxy-authenticate",
-  "proxy-authorization",
-  "transfer-encoding",
-  "te",
-  "trailer",
-  "upgrade",
-]);
 
 class ListenersFileTooLargeError extends Error {
   /** stable identifier for listeners size-cap violations */
@@ -187,58 +183,6 @@ function parseTransferEncoding(raw: string | string[] | undefined): string[] {
     .split(",")
     .map((x) => x.trim().toLowerCase())
     .filter(Boolean);
-}
-
-function filterHopByHop(
-  headers: Record<string, string | string[]>,
-): Record<string, string | string[]> {
-  const connection = joinHeaderValue(headers["connection"]).toLowerCase();
-  const connectionTokens = new Set(
-    connection
-      .split(",")
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean),
-  );
-
-  const out: Record<string, string | string[]> = {};
-  for (const [k, v] of Object.entries(headers)) {
-    if (HOP_BY_HOP_HEADERS.has(k)) continue;
-    if (connectionTokens.has(k)) continue;
-    out[k] = v;
-  }
-  return out;
-}
-
-function filterHopByHopForUpgrade(
-  headers: Record<string, string | string[]>,
-): Record<string, string | string[]> {
-  const out: Record<string, string | string[]> = { ...headers };
-
-  // Unlike normal HTTP proxying, WebSocket handshakes require forwarding Connection/Upgrade.
-  // Still strip proxy-only and framing hop-by-hop headers.
-  delete out["keep-alive"];
-  delete out["proxy-connection"];
-  delete out["proxy-authenticate"];
-  delete out["proxy-authorization"];
-  delete out["transfer-encoding"];
-  delete out["te"];
-  delete out["trailer"];
-
-  // Apply Connection: token stripping, but keep the Upgrade token.
-  const connection = joinHeaderValue(headers["connection"]).toLowerCase();
-  const connectionTokens = new Set(
-    connection
-      .split(",")
-      .map((x) => x.trim().toLowerCase())
-      .filter(Boolean),
-  );
-
-  for (const token of connectionTokens) {
-    if (token === "upgrade") continue;
-    delete out[token];
-  }
-
-  return out;
 }
 
 function normalizeHeaderRecord(
@@ -978,8 +922,8 @@ export class IngressGateway {
     let maxBufferedResponseBodyBytes = this.maxBufferedResponseBodyBytes;
 
     const filterHeaders = forUpgrade
-      ? filterHopByHopForUpgrade
-      : filterHopByHop;
+      ? stripHopByHopHeadersForWebSocket
+      : stripHopByHopHeaders;
 
     // Build initial upstream request config (can be patched by onRequest)
     let hookRequest: IngressHookRequest = {
@@ -1141,17 +1085,31 @@ export class IngressGateway {
     bodyText: string,
   ) {
     const body = Buffer.from(bodyText, "utf8");
-    this.writeRawHttpResponse(
-      socket,
-      statusCode,
-      statusMessage,
+
+    const safeWrite = (chunk: Buffer) => {
+      try {
+        socket.write(chunk);
+      } catch {
+        // ignore
+      }
+    };
+
+    sendHttpResponse(
+      safeWrite,
       {
-        "content-type": "text/plain",
-        "content-length": String(body.length),
-        connection: "close",
+        status: statusCode,
+        statusText: statusMessage,
+        headers: {
+          "content-type": "text/plain",
+          "content-length": String(body.length),
+          connection: "close",
+        },
+        body,
       },
-      body,
+      "HTTP/1.1",
+      "latin1",
     );
+
     socket.destroy();
   }
 
@@ -1257,7 +1215,9 @@ export class IngressGateway {
 
       // Read response head
       const head = await readHttpHead(upstream);
-      let respHeaders = normalizeHeaderRecord(filterHopByHop(head.headers));
+      let respHeaders = normalizeHeaderRecord(
+        stripHopByHopHeaders(head.headers),
+      );
       delete respHeaders["content-length"]; // let node decide unless we keep fixed-length
       delete respHeaders["transfer-encoding"];
 
@@ -1312,7 +1272,7 @@ export class IngressGateway {
       }
 
       const finalHeaders = normalizeHeaderRecord(
-        filterHopByHop(responseForHook.headers as any),
+        stripHopByHopHeaders(responseForHook.headers as any),
       );
 
       // If we buffered the response (or a hook provided an explicit replacement body), send it with a fixed content-length.
@@ -1396,41 +1356,6 @@ export class IngressGateway {
     }
   }
 
-  private isWebSocketUpgradeRequest(
-    headers: Record<string, string | string[]>,
-  ): boolean {
-    const upgrade = joinHeaderValue(headers["upgrade"])?.toLowerCase() ?? "";
-
-    if (upgrade === "websocket") return true;
-    if (headers["sec-websocket-key"] || headers["sec-websocket-version"])
-      return true;
-    return false;
-  }
-
-  private writeRawHttpResponse(
-    socket: net.Socket,
-    statusCode: number,
-    statusMessage: string,
-    headers: Record<string, string>,
-    body: Buffer,
-  ) {
-    const lines: string[] = [];
-    lines.push(`HTTP/1.1 ${statusCode} ${statusMessage}`);
-    for (const [k, v] of Object.entries(headers)) {
-      const name = k.replace(/[\r\n:]+/g, "");
-      if (!name) continue;
-      const value = String(v).replace(/[\r\n]+/g, " ");
-      lines.push(`${name}: ${value}`);
-    }
-    const head = lines.join("\r\n") + "\r\n\r\n";
-    try {
-      socket.write(Buffer.from(head, "latin1"));
-      if (body.length > 0) socket.write(body);
-    } catch {
-      // ignore
-    }
-  }
-
   private async handleUpgrade(
     req: IncomingMessage,
     socket: net.Socket,
@@ -1474,7 +1399,7 @@ export class IngressGateway {
         );
       }
 
-      if (!this.isWebSocketUpgradeRequest(incoming)) {
+      if (!isWebSocketUpgradeRequestHeaders(incoming)) {
         return this.rejectUpgrade(
           socket,
           400,
@@ -1546,23 +1471,16 @@ export class IngressGateway {
       }
 
       // Write response head
-      const outLines: string[] = [];
-      outLines.push(
-        `HTTP/1.1 ${responseForHook.statusCode} ${responseForHook.statusMessage}`,
+      sendHttpResponseHead(
+        (chunk) => socket.write(chunk),
+        {
+          status: responseForHook.statusCode,
+          statusText: responseForHook.statusMessage,
+          headers: finalHeaders as any,
+        },
+        "HTTP/1.1",
+        "latin1",
       );
-      for (const [k, v] of Object.entries(finalHeaders)) {
-        if (v === undefined) continue;
-        const name = k.replace(/[\r\n:]+/g, "");
-        if (!name) continue;
-        if (Array.isArray(v)) {
-          for (const vv of v)
-            outLines.push(`${name}: ${String(vv).replace(/[\r\n]+/g, " ")}`);
-        } else {
-          outLines.push(`${name}: ${String(v).replace(/[\r\n]+/g, " ")}`);
-        }
-      }
-      const outHead = outLines.join("\r\n") + "\r\n\r\n";
-      socket.write(Buffer.from(outHead, "latin1"));
 
       // Body replacement (if any)
       if (responseForHook.body && responseForHook.body.length > 0) {

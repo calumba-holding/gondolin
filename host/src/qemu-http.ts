@@ -21,6 +21,7 @@ import {
 import {
   HttpReceiveBuffer,
   HttpRequestBlockedError,
+  MAX_HTTP_HEADER_BYTES,
   parseHeaderLines,
   coalesceHeaderRecord,
   parseContentLength,
@@ -28,13 +29,15 @@ import {
   getCheckedDispatcher,
   getRedirectUrl,
   normalizeLookupEntries,
+  sendHttpResponse,
+  sendHttpResponseHead,
   stripHopByHopHeaders,
   stripHopByHopHeadersForWebSocket,
 } from "./http-utils";
-import type { HttpRequestData } from "./http-utils";
+import type { HttpRequestData, LookupEntry } from "./http-utils";
 
 export const MAX_HTTP_REDIRECTS = 10;
-export const MAX_HTTP_HEADER_BYTES = 64 * 1024;
+export { MAX_HTTP_HEADER_BYTES };
 export const MAX_HTTP_PIPELINE_BYTES = 64 * 1024;
 
 // When streaming request bodies (Content-Length, no buffering), keep the internal
@@ -1804,48 +1807,6 @@ async function handleWebSocketUpgrade(
   );
 }
 
-function sendHttpResponseHead(
-  write: (chunk: Buffer) => void,
-  response: {
-    status: number;
-    statusText: string;
-    headers: HttpResponseHeaders;
-  },
-  httpVersion: "HTTP/1.0" | "HTTP/1.1" = "HTTP/1.1",
-) {
-  const statusLine = `${httpVersion} ${response.status} ${response.statusText}\r\n`;
-
-  const headerLines: string[] = [];
-  for (const [rawName, rawValue] of Object.entries(response.headers)) {
-    const name = rawName.replace(/[\r\n:]+/g, "");
-    if (!name) continue;
-
-    const values = Array.isArray(rawValue) ? rawValue : [rawValue];
-    for (const v of values) {
-      const value = String(v).replace(/[\r\n]+/g, " ");
-      headerLines.push(`${name}: ${value}`);
-    }
-  }
-
-  let headerBlock = statusLine;
-  if (headerLines.length > 0) {
-    headerBlock += headerLines.join("\r\n") + "\r\n";
-  }
-  headerBlock += "\r\n";
-  write(Buffer.from(headerBlock));
-}
-
-function sendHttpResponse(
-  write: (chunk: Buffer) => void,
-  response: HttpHookResponse,
-  httpVersion: "HTTP/1.0" | "HTTP/1.1" = "HTTP/1.1",
-) {
-  sendHttpResponseHead(write, response, httpVersion);
-  if (response.body.length > 0) {
-    write(response.body);
-  }
-}
-
 async function sendChunkedBody(
   body: WebReadableStream<Uint8Array>,
   write: (chunk: Buffer) => void,
@@ -1982,29 +1943,6 @@ function buildFetchUrl(
   if (!host) return null;
   return `${defaultScheme}://${host}${request.target}`;
 }
-
-type LookupEntry = {
-  address: string;
-  family: 4 | 6;
-};
-
-type LookupResult = string | dns.LookupAddress[];
-
-type LookupCallback = (
-  err: NodeJS.ErrnoException | null,
-  address: LookupResult,
-  family?: number,
-) => void;
-
-type LookupFn = (
-  hostname: string,
-  options: dns.LookupOneOptions | dns.LookupAllOptions,
-  callback: (
-    err: NodeJS.ErrnoException | null,
-    address: LookupResult,
-    family?: number,
-  ) => void,
-) => void;
 
 export async function resolveHostname(
   backend: QemuNetworkBackend,
