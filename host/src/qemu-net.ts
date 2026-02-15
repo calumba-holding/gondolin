@@ -52,6 +52,7 @@ import {
   type HttpSession,
 } from "./qemu-http";
 import type { WebSocketState } from "./qemu-ws";
+import { QemuIcmpTracker, type IcmpTiming } from "./qemu-icmp";
 
 export const DEFAULT_MAX_HTTP_BODY_BYTES = 64 * 1024 * 1024;
 // Default cap for buffering upstream HTTP *responses* (not streaming).
@@ -85,17 +86,6 @@ import {
   TcpFlowProtocol,
   UdpSendMessage,
 } from "./network-stack";
-
-type IcmpTiming = {
-  srcIP: string;
-  dstIP: string;
-  id: number;
-  seq: number;
-  recvTime: number;
-  rxTime: number;
-  replyTime: number;
-  size: number;
-};
 
 type UdpSession = {
   socket: dgram.Socket;
@@ -397,9 +387,7 @@ export class QemuNetworkBackend extends EventEmitter {
   private caPromise: Promise<CaCert> | null = null;
   private tlsContexts = new Map<string, TlsContextCacheEntry>();
   private tlsContextPromises = new Map<string, Promise<tls.SecureContext>>();
-  private readonly icmpTimings = new Map<string, IcmpTiming>();
-  private icmpDebugBuffer = Buffer.alloc(0);
-  private icmpRxBuffer = Buffer.alloc(0);
+  private readonly icmp: QemuIcmpTracker | null;
   private eventLoopDelay: ReturnType<typeof monitorEventLoopDelay> | null =
     null;
 
@@ -438,6 +426,14 @@ export class QemuNetworkBackend extends EventEmitter {
       this.eventLoopDelay = monitorEventLoopDelay({ resolution: 10 });
       this.eventLoopDelay.enable();
     }
+
+    this.icmp = options.debug
+      ? new QemuIcmpTracker(
+          this.emitDebug.bind(this),
+          () => this.eventLoopDelay,
+        )
+      : null;
+
     this.mitmDir = resolveMitmCertDir(options.mitmCertDir);
 
     this.maxTcpPendingWriteBytes =
@@ -548,7 +544,7 @@ export class QemuNetworkBackend extends EventEmitter {
     socket.on("data", (chunk) => {
       if (this.options.debug) {
         const now = performance.now();
-        this.trackIcmpRequests(chunk, now);
+        this.icmp?.trackIcmpRequests(chunk, now);
       }
       this.stack?.writeToNetwork(chunk);
       this.flush();
@@ -672,14 +668,12 @@ export class QemuNetworkBackend extends EventEmitter {
       },
     );
     if (this.options.debug) {
-      this.icmpTimings.clear();
-      this.icmpDebugBuffer = Buffer.alloc(0);
-      this.icmpRxBuffer = Buffer.alloc(0);
+      this.icmp?.reset();
       this.stack.on("dhcp", (state, ip) => {
         this.emitDebug(`dhcp ${state} ${ip}`);
       });
       this.stack.on("icmp", (info) => {
-        this.recordIcmpTiming(info as IcmpTiming);
+        this.icmp?.recordIcmpTiming(info as IcmpTiming);
       });
     }
   }
@@ -692,7 +686,7 @@ export class QemuNetworkBackend extends EventEmitter {
       if (!chunk || chunk.length === 0) break;
       if (this.options.debug) {
         const now = performance.now();
-        this.trackIcmpReplies(chunk, now);
+        this.icmp?.trackIcmpReplies(chunk, now);
         this.emitDebug(`tx ${chunk.length} bytes to qemu`);
       }
       const ok = this.socket.write(chunk);
@@ -701,151 +695,6 @@ export class QemuNetworkBackend extends EventEmitter {
         return;
       }
     }
-  }
-
-  private recordIcmpTiming(info: IcmpTiming) {
-    const key = this.icmpKey(info.srcIP, info.dstIP, info.id, info.seq);
-    const existing = this.icmpTimings.get(key);
-    if (existing) {
-      if (Number.isFinite(info.recvTime) && info.recvTime > 0) {
-        existing.recvTime = info.recvTime;
-      }
-      if (Number.isFinite(info.rxTime) && info.rxTime > 0) {
-        existing.rxTime = info.rxTime;
-      }
-      if (Number.isFinite(info.replyTime) && info.replyTime > 0) {
-        existing.replyTime = info.replyTime;
-      }
-      if (Number.isFinite(info.size) && info.size > 0) {
-        existing.size = info.size;
-      }
-      existing.srcIP = info.srcIP;
-      existing.dstIP = info.dstIP;
-      return;
-    }
-    this.icmpTimings.set(key, info);
-  }
-
-  private icmpKey(srcIP: string, dstIP: string, id: number, seq: number) {
-    return `${id}:${seq}:${srcIP}:${dstIP}`;
-  }
-
-  private trackIcmpRequests(chunk: Buffer, now: number) {
-    this.icmpRxBuffer = Buffer.concat([this.icmpRxBuffer, chunk]);
-    while (this.icmpRxBuffer.length >= 4) {
-      const frameLen = this.icmpRxBuffer.readUInt32BE(0);
-      if (this.icmpRxBuffer.length < 4 + frameLen) break;
-      const frame = this.icmpRxBuffer.subarray(4, 4 + frameLen);
-      this.icmpRxBuffer = this.icmpRxBuffer.subarray(4 + frameLen);
-      this.logIcmpRequestFrame(frame, now);
-    }
-  }
-
-  private trackIcmpReplies(chunk: Buffer, now: number) {
-    this.icmpDebugBuffer = Buffer.concat([this.icmpDebugBuffer, chunk]);
-    while (this.icmpDebugBuffer.length >= 4) {
-      const frameLen = this.icmpDebugBuffer.readUInt32BE(0);
-      if (this.icmpDebugBuffer.length < 4 + frameLen) break;
-      const frame = this.icmpDebugBuffer.subarray(4, 4 + frameLen);
-      this.icmpDebugBuffer = this.icmpDebugBuffer.subarray(4 + frameLen);
-      this.logIcmpReplyFrame(frame, now);
-    }
-  }
-
-  private logIcmpRequestFrame(frame: Buffer, now: number) {
-    if (frame.length < 14) return;
-    const etherType = frame.readUInt16BE(12);
-    if (etherType !== 0x0800) return;
-
-    const ip = frame.subarray(14);
-    if (ip.length < 20) return;
-    const version = ip[0] >> 4;
-    if (version !== 4) return;
-    const headerLen = (ip[0] & 0x0f) * 4;
-    if (ip.length < headerLen) return;
-    if (ip[9] !== 1) return;
-
-    const totalLen = ip.readUInt16BE(2);
-    const payloadEnd = Math.min(ip.length, totalLen);
-    if (payloadEnd <= headerLen) return;
-
-    const icmp = ip.subarray(headerLen, payloadEnd);
-    if (icmp.length < 8) return;
-    if (icmp[0] !== 8) return;
-
-    const srcIP = `${ip[12]}.${ip[13]}.${ip[14]}.${ip[15]}`;
-    const dstIP = `${ip[16]}.${ip[17]}.${ip[18]}.${ip[19]}`;
-    const id = icmp.readUInt16BE(4);
-    const seq = icmp.readUInt16BE(6);
-
-    this.recordIcmpTiming({
-      srcIP,
-      dstIP,
-      id,
-      seq,
-      recvTime: now,
-      rxTime: now,
-      replyTime: now,
-      size: icmp.length,
-    });
-  }
-
-  private logIcmpReplyFrame(frame: Buffer, now: number) {
-    if (frame.length < 14) return;
-    const etherType = frame.readUInt16BE(12);
-    if (etherType !== 0x0800) return;
-
-    const ip = frame.subarray(14);
-    if (ip.length < 20) return;
-    const version = ip[0] >> 4;
-    if (version !== 4) return;
-    const headerLen = (ip[0] & 0x0f) * 4;
-    if (ip.length < headerLen) return;
-    if (ip[9] !== 1) return;
-
-    const totalLen = ip.readUInt16BE(2);
-    const payloadEnd = Math.min(ip.length, totalLen);
-    if (payloadEnd <= headerLen) return;
-
-    const icmp = ip.subarray(headerLen, payloadEnd);
-    if (icmp.length < 8) return;
-    if (icmp[0] !== 0) return;
-
-    const srcIP = `${ip[12]}.${ip[13]}.${ip[14]}.${ip[15]}`;
-    const dstIP = `${ip[16]}.${ip[17]}.${ip[18]}.${ip[19]}`;
-    const id = icmp.readUInt16BE(4);
-    const seq = icmp.readUInt16BE(6);
-
-    const key = this.icmpKey(dstIP, srcIP, id, seq);
-    const timing = this.icmpTimings.get(key);
-    if (!timing) return;
-
-    this.icmpTimings.delete(key);
-
-    const processingMs = timing.replyTime - timing.rxTime;
-    const queuedMs = now - timing.replyTime;
-    const totalMs = now - timing.rxTime;
-    const guestToHostMs = Number.isFinite(timing.recvTime)
-      ? timing.rxTime - timing.recvTime
-      : Number.NaN;
-
-    let eventLoopInfo = "";
-    if (this.eventLoopDelay) {
-      const meanMs = this.eventLoopDelay.mean / 1e6;
-      const maxMs = this.eventLoopDelay.max / 1e6;
-      eventLoopInfo = ` evloop_mean=${meanMs.toFixed(3)}ms evloop_max=${maxMs.toFixed(3)}ms`;
-      this.eventLoopDelay.reset();
-    }
-
-    const guestToHostLabel = Number.isFinite(guestToHostMs)
-      ? `guest_to_host=${guestToHostMs.toFixed(3)}ms `
-      : "";
-
-    this.emitDebug(
-      `icmp echo id=${timing.id} seq=${timing.seq} ${timing.srcIP} -> ${timing.dstIP} size=${timing.size} ` +
-        `${guestToHostLabel}processing=${processingMs.toFixed(3)}ms ` +
-        `queued=${queuedMs.toFixed(3)}ms total=${totalMs.toFixed(3)}ms${eventLoopInfo}`,
-    );
   }
 
   private cleanupSessions() {
