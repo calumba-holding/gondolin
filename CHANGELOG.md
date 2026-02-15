@@ -4,6 +4,8 @@ All notable changes to Gondolin are documented here.
 
 ## Unreleased
 
+## 0.3.0
+
 - Added `httpHooks.onRequestHead` and streamed `Content-Length` request bodies to avoid buffering
 - Add SSH authentication and an exec policy for controlled SSH access. #37
 - Allow customizing `gondolin bash` (command, `cwd`, and environment variables). #38
