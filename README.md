@@ -132,8 +132,7 @@ In the design of Gondolin we made various architectural choices that require ela
 
 - [Host package](host/README.md): installation, CLI quick start, and a TypeScript example
 - [Guest sandbox](guest/README.md): Zig build, initramfs/image pipeline, and development notes
-- [Pi + Gondolin extension example](host/examples/pi-gondolin.ts): run pi's tools inside a micro-VM (mounts your project at `/workspace`)
-- [LLM post-build image example](host/examples/llm.json): install Python tools into the image via `postBuild.commands`
+- [Examples](host/examples): multiple examples for how to hook and run the sandbox.
 
 ## Programmable Filesystem
 
@@ -170,10 +169,10 @@ GONDOLIN_GUEST_DIR=./my-assets gondolin bash
 See [Custom images](https://earendil-works.github.io/gondolin/custom-images/) for the full configuration
 reference and recipes.
 
-## Components
+## Pi Extension
 
-- [`guest/`](guest/) — Zig-based `sandboxd` daemon and Alpine initramfs build.
-- [`host/`](host/) — TypeScript host controller and in-process control plane for the guest.
+There is a [Pi + Gondolin extension](host/examples/pi-gondolin.ts) that lets you
+run pi's tools inside a micro-VM (mounts your project at `/workspace`).
 
 ## AI Use Disclaimer
 
