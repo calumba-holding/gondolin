@@ -63,7 +63,7 @@ await vm.close();
 ## Using Gondolin
 
 - [Workloads](./workloads.md): typical workloads and lifecycles
-- [CLI](./cli.md): run interactive shells and commands inside a micro-VM
+- [CLI](./cli.md): run shells/commands, list sessions, and attach to running VMs
 - [SDK](./sdk.md): programmatic control via the TypeScript/JavaScript API
 - [Secrets Handling](./secrets.md): placeholder-based secret injection and host allowlists
 - [Ingress](./ingress.md): expose guest HTTP servers on the host

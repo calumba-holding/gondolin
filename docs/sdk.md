@@ -45,6 +45,25 @@ await vm.start();
 await vm.close();
 ```
 
+### Session identity and external attach
+
+Each `VM` instance has a stable session UUID available as `vm.id`.
+
+When a VM is started, gondolin registers a session entry under
+`~/.cache/gondolin/sessions/` (`<uuid>.json` metadata + `<uuid>.sock` attach
+socket). This powers CLI workflows like `gondolin list` and
+`gondolin attach <uuid>`.
+
+You can customize the session label shown by `gondolin list` with
+`VM.create({ sessionLabel: "..." })`.
+
+Advanced users can access the registry/attach helpers directly:
+
+- `listSessions()`
+- `findSession()`
+- `gcSessions()`
+- `connectToSession()`
+
 ### `vm.exec()`
 
 This is the most common of operations.  it returns an `ExecProcess` (a running
