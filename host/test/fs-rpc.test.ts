@@ -229,6 +229,234 @@ test("fs rpc readdir caches paginated listings and invalidates on mutations", as
   await service.close();
 });
 
+test("fs rpc readdir invalidates only affected directories", async () => {
+  const base = new MemoryProvider();
+  const readdirCalls = new Map<string, number>();
+  const provider = new Proxy(base as any, {
+    get(target, prop, receiver) {
+      if (prop === "readdir") {
+        return async (entryPath: string, options?: object) => {
+          readdirCalls.set(entryPath, (readdirCalls.get(entryPath) ?? 0) + 1);
+          return (target as any).readdir(entryPath, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+  const service = new FsRpcService(provider);
+
+  await send(service, "mkdir", {
+    parent_ino: 1,
+    name: "left",
+    mode: 0o755,
+  });
+  await send(service, "mkdir", {
+    parent_ino: 1,
+    name: "right",
+    mode: 0o755,
+  });
+
+  const leftLookup = await send(service, "lookup", {
+    parent_ino: 1,
+    name: "left",
+  });
+  const rightLookup = await send(service, "lookup", {
+    parent_ino: 1,
+    name: "right",
+  });
+  assert.equal(leftLookup.p.err, 0);
+  assert.equal(rightLookup.p.err, 0);
+  const leftIno = (leftLookup.p.res?.entry as { ino: number }).ino;
+  const rightIno = (rightLookup.p.res?.entry as { ino: number }).ino;
+
+  await send(service, "create", {
+    parent_ino: leftIno,
+    name: "a.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+  await send(service, "create", {
+    parent_ino: rightIno,
+    name: "b.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const leftRead = await send(service, "readdir", {
+    ino: leftIno,
+    offset: 0,
+    max_entries: 128,
+  });
+  const rightRead = await send(service, "readdir", {
+    ino: rightIno,
+    offset: 0,
+    max_entries: 128,
+  });
+  assert.equal(leftRead.p.err, 0);
+  assert.equal(rightRead.p.err, 0);
+  assert.equal(readdirCalls.get("/left") ?? 0, 1);
+  assert.equal(readdirCalls.get("/right") ?? 0, 1);
+
+  await send(service, "create", {
+    parent_ino: leftIno,
+    name: "c.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const rightAfterLeftMutation = await send(service, "readdir", {
+    ino: rightIno,
+    offset: 0,
+    max_entries: 128,
+  });
+  const leftAfterLeftMutation = await send(service, "readdir", {
+    ino: leftIno,
+    offset: 0,
+    max_entries: 128,
+  });
+  assert.equal(rightAfterLeftMutation.p.err, 0);
+  assert.equal(leftAfterLeftMutation.p.err, 0);
+  assert.equal(readdirCalls.get("/right") ?? 0, 1);
+  assert.equal(readdirCalls.get("/left") ?? 0, 2);
+
+  await service.close();
+});
+
+test("fs rpc readdir deduplicates concurrent cache misses", async () => {
+  const base = new MemoryProvider();
+  let readdirCalls = 0;
+  const provider = new Proxy(base as any, {
+    get(target, prop, receiver) {
+      if (prop === "readdir") {
+        return async (entryPath: string, options?: object) => {
+          readdirCalls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          return (target as any).readdir(entryPath, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+  const service = new FsRpcService(provider);
+
+  await send(service, "create", {
+    parent_ino: 1,
+    name: "a.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const [first, second] = await Promise.all([
+    send(
+      service,
+      "readdir",
+      {
+        ino: 1,
+        offset: 0,
+        max_entries: 128,
+      },
+      101,
+    ),
+    send(
+      service,
+      "readdir",
+      {
+        ino: 1,
+        offset: 0,
+        max_entries: 128,
+      },
+      102,
+    ),
+  ]);
+  assert.equal(first.p.err, 0);
+  assert.equal(second.p.err, 0);
+  assert.equal(readdirCalls, 1);
+
+  const afterWarm = await send(service, "readdir", {
+    ino: 1,
+    offset: 0,
+    max_entries: 128,
+  });
+  assert.equal(afterWarm.p.err, 0);
+  assert.equal(readdirCalls, 1);
+
+  await service.close();
+});
+
+test("fs rpc readdir cache uses sliding ttl on hits", async () => {
+  const base = new MemoryProvider();
+  let readdirCalls = 0;
+  const provider = new Proxy(base as any, {
+    get(target, prop, receiver) {
+      if (prop === "readdir") {
+        return async (entryPath: string, options?: object) => {
+          readdirCalls += 1;
+          return (target as any).readdir(entryPath, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+  const service = new FsRpcService(provider);
+
+  await send(service, "create", {
+    parent_ino: 1,
+    name: "a.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const originalDateNow = Date.now;
+  let now = 1_000;
+  Date.now = () => now;
+
+  try {
+    const first = await send(service, "readdir", {
+      ino: 1,
+      offset: 0,
+      max_entries: 128,
+    });
+    assert.equal(first.p.err, 0);
+    assert.equal(readdirCalls, 1);
+
+    const firstExpiry = (
+      (service as any).readdirCache.get("/") as { expiresAt: number }
+    ).expiresAt;
+
+    now = firstExpiry - 1;
+    const second = await send(service, "readdir", {
+      ino: 1,
+      offset: 0,
+      max_entries: 128,
+    });
+    assert.equal(second.p.err, 0);
+    assert.equal(readdirCalls, 1);
+
+    const refreshedExpiry = (
+      (service as any).readdirCache.get("/") as { expiresAt: number }
+    ).expiresAt;
+    assert.ok(refreshedExpiry > firstExpiry);
+
+    now = firstExpiry + 1;
+    const third = await send(service, "readdir", {
+      ino: 1,
+      offset: 0,
+      max_entries: 128,
+    });
+    assert.equal(third.p.err, 0);
+    assert.equal(readdirCalls, 1);
+  } finally {
+    Date.now = originalDateNow;
+    await service.close();
+  }
+});
+
 test("fs rpc readdir reports Linux dirent types", async () => {
   const service = createService();
 

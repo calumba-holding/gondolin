@@ -12,7 +12,7 @@ const { errno: ERRNO } = os.constants;
 const DEFAULT_ENTRY_TTL_MS = 1000;
 const DEFAULT_ATTR_TTL_MS = 1000;
 const DEFAULT_NEGATIVE_TTL_MS = 250;
-const READDIR_CACHE_TTL_MS = DEFAULT_ENTRY_TTL_MS;
+const READDIR_CACHE_TTL_MS = 5000;
 const READDIR_CACHE_MAX_DIRS = 128;
 
 const DT_REG = 8;
@@ -76,6 +76,11 @@ export class FsRpcService {
   private readonly inoToPaths = new Map<number, Set<string>>();
   private readonly handles = new Map<number, HandleEntry>();
   private readonly readdirCache = new Map<string, ReaddirCacheEntry>();
+  private readonly readdirInFlight = new Map<
+    string,
+    Promise<Array<string | Dirent>>
+  >();
+  private readdirCacheVersion = 0;
   private readonly logger?: (message: string) => void;
   readonly metrics: FsRpcMetrics = {
     requests: 0,
@@ -131,6 +136,8 @@ export class FsRpcService {
     const handles = Array.from(this.handles.values());
     this.handles.clear();
     this.readdirCache.clear();
+    this.readdirInFlight.clear();
+    this.readdirCacheVersion += 1;
     await Promise.all(
       handles.map(async (entry) => {
         try {
@@ -363,7 +370,7 @@ export class FsRpcService {
     const stats = await handle.stat();
     const ino = this.ensureIno(entryPath);
     const fh = this.allocateHandle(handle, ino, entryPath, append);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([parentPath]);
 
     return {
       entry: {
@@ -388,7 +395,7 @@ export class FsRpcService {
     await this.provider.mkdir(entryPath, { mode });
     const stats = await this.provider.stat(entryPath);
     const ino = this.ensureIno(entryPath);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([parentPath]);
 
     return {
       entry: {
@@ -419,7 +426,7 @@ export class FsRpcService {
     await provider.symlink(target, entryPath);
     const stats = await this.provider.lstat(entryPath);
     const ino = this.ensureIno(entryPath);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([parentPath]);
 
     return {
       entry: {
@@ -440,7 +447,7 @@ export class FsRpcService {
     const entryPath = normalizePath(path.posix.join(parentPath, name));
     await this.provider.unlink(entryPath);
     this.removeMapping(entryPath);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([parentPath]);
     return {};
   }
 
@@ -453,7 +460,7 @@ export class FsRpcService {
     const entryPath = normalizePath(path.posix.join(parentPath, name));
     await this.provider.rmdir(entryPath);
     this.removeMapping(entryPath);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([parentPath, entryPath], true);
     return {};
   }
 
@@ -483,7 +490,8 @@ export class FsRpcService {
     const newPath = normalizePath(path.posix.join(newParentPath, newName));
     await this.provider.rename(oldPath, newPath);
     this.renameMapping(oldPath, newPath);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([oldParentPath, newParentPath]);
+    this.invalidateReaddirCacheEntries([oldPath, newPath], true);
     return {};
   }
 
@@ -511,7 +519,7 @@ export class FsRpcService {
     await provider.link(oldPath, newPath);
     const stats = await this.provider.lstat(newPath);
     const ino = this.ensureIno(newPath, oldIno);
-    this.invalidateReaddirCache();
+    this.invalidateReaddirCacheEntries([newParentPath]);
 
     return {
       entry: {
@@ -726,6 +734,12 @@ export class FsRpcService {
     const now = Date.now();
     const cached = this.readdirCache.get(normalized);
     if (cached && cached.expiresAt > now) {
+      // Sliding TTL: keep active pagination streams warm.
+      this.setReaddirCacheEntry(
+        normalized,
+        cached.entries,
+        now + READDIR_CACHE_TTL_MS,
+      );
       return cached.entries;
     }
 
@@ -733,9 +747,47 @@ export class FsRpcService {
       this.readdirCache.delete(normalized);
     }
 
-    const entries = (await this.provider.readdir(normalized, {
-      withFileTypes: true,
-    })) as Array<string | Dirent>;
+    const inFlight = this.readdirInFlight.get(normalized);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const startVersion = this.readdirCacheVersion;
+    const load = (async () => {
+      const entries = (await this.provider.readdir(normalized, {
+        withFileTypes: true,
+      })) as Array<string | Dirent>;
+
+      // Ignore stale in-flight fills that raced with a mutation invalidation.
+      if (startVersion === this.readdirCacheVersion) {
+        this.setReaddirCacheEntry(
+          normalized,
+          entries,
+          Date.now() + READDIR_CACHE_TTL_MS,
+        );
+      }
+
+      return entries;
+    })();
+
+    this.readdirInFlight.set(normalized, load);
+    try {
+      return await load;
+    } finally {
+      if (this.readdirInFlight.get(normalized) === load) {
+        this.readdirInFlight.delete(normalized);
+      }
+    }
+  }
+
+  private setReaddirCacheEntry(
+    entryPath: string,
+    entries: Array<string | Dirent>,
+    expiresAt: number,
+  ) {
+    if (this.readdirCache.has(entryPath)) {
+      this.readdirCache.delete(entryPath);
+    }
 
     if (this.readdirCache.size >= READDIR_CACHE_MAX_DIRS) {
       const oldestKey = this.readdirCache.keys().next().value as
@@ -746,15 +798,34 @@ export class FsRpcService {
       }
     }
 
-    this.readdirCache.set(normalized, {
-      entries,
-      expiresAt: now + READDIR_CACHE_TTL_MS,
-    });
-    return entries;
+    this.readdirCache.set(entryPath, { entries, expiresAt });
   }
 
-  private invalidateReaddirCache() {
-    this.readdirCache.clear();
+  private invalidateReaddirCacheEntries(
+    entryPaths: Iterable<string>,
+    includeDescendants = false,
+  ) {
+    const targets = new Set<string>();
+    for (const entryPath of entryPaths) {
+      targets.add(normalizePath(entryPath));
+    }
+    if (targets.size === 0) {
+      return;
+    }
+
+    this.readdirCacheVersion += 1;
+
+    for (const cachePath of this.readdirCache.keys()) {
+      if (matchesAnyTarget(cachePath, targets, includeDescendants)) {
+        this.readdirCache.delete(cachePath);
+      }
+    }
+
+    for (const cachePath of this.readdirInFlight.keys()) {
+      if (matchesAnyTarget(cachePath, targets, includeDescendants)) {
+        this.readdirInFlight.delete(cachePath);
+      }
+    }
   }
 
   private ensureIno(entryPath: string, preferredIno?: number) {
@@ -891,6 +962,22 @@ function normalizePath(entryPath: string) {
     normalized = normalized.slice(0, -1);
   }
   return normalized;
+}
+
+function matchesAnyTarget(
+  cachePath: string,
+  targets: Set<string>,
+  includeDescendants: boolean,
+) {
+  for (const target of targets) {
+    if (cachePath === target) {
+      return true;
+    }
+    if (includeDescendants && cachePath.startsWith(target + "/")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function validateName(name: string, op: string) {
