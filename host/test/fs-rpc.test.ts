@@ -162,6 +162,73 @@ test("fs rpc readdir offsets", async () => {
   await service.close();
 });
 
+test("fs rpc readdir caches paginated listings and invalidates on mutations", async () => {
+  const base = new MemoryProvider();
+  let readdirCalls = 0;
+  const provider = new Proxy(base as any, {
+    get(target, prop, receiver) {
+      if (prop === "readdir") {
+        return async (entryPath: string, options?: object) => {
+          readdirCalls += 1;
+          return (target as any).readdir(entryPath, options);
+        };
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+  const service = new FsRpcService(provider);
+
+  await send(service, "create", {
+    parent_ino: 1,
+    name: "a.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+  await send(service, "create", {
+    parent_ino: 1,
+    name: "b.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const first = await send(service, "readdir", {
+    ino: 1,
+    offset: 0,
+    max_entries: 1,
+  });
+  assert.equal(first.p.err, 0);
+  const firstEntries =
+    (first.p.res?.entries as Array<{ offset: number }> | undefined) ?? [];
+  assert.equal(firstEntries.length, 1);
+
+  const second = await send(service, "readdir", {
+    ino: 1,
+    offset: firstEntries[0].offset,
+    max_entries: 1,
+  });
+  assert.equal(second.p.err, 0);
+  assert.equal(readdirCalls, 1);
+
+  await send(service, "create", {
+    parent_ino: 1,
+    name: "c.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+
+  const afterMutation = await send(service, "readdir", {
+    ino: 1,
+    offset: 0,
+    max_entries: 128,
+  });
+  assert.equal(afterMutation.p.err, 0);
+  assert.equal(readdirCalls, 2);
+
+  await service.close();
+});
+
 test("fs rpc readdir reports Linux dirent types", async () => {
   const service = createService();
 

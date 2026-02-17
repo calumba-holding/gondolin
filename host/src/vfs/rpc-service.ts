@@ -12,6 +12,8 @@ const { errno: ERRNO } = os.constants;
 const DEFAULT_ENTRY_TTL_MS = 1000;
 const DEFAULT_ATTR_TTL_MS = 1000;
 const DEFAULT_NEGATIVE_TTL_MS = 250;
+const READDIR_CACHE_TTL_MS = DEFAULT_ENTRY_TTL_MS;
+const READDIR_CACHE_MAX_DIRS = 128;
 
 const DT_REG = 8;
 const DT_DIR = 4;
@@ -62,12 +64,18 @@ type HandleEntry = {
   append: boolean;
 };
 
+type ReaddirCacheEntry = {
+  entries: Array<string | Dirent>;
+  expiresAt: number;
+};
+
 export class FsRpcService {
   private nextIno = 2;
   private nextHandle = 1;
   private readonly pathToIno = new Map<string, number>();
   private readonly inoToPaths = new Map<number, Set<string>>();
   private readonly handles = new Map<number, HandleEntry>();
+  private readonly readdirCache = new Map<string, ReaddirCacheEntry>();
   private readonly logger?: (message: string) => void;
   readonly metrics: FsRpcMetrics = {
     requests: 0,
@@ -122,6 +130,7 @@ export class FsRpcService {
   async close() {
     const handles = Array.from(this.handles.values());
     this.handles.clear();
+    this.readdirCache.clear();
     await Promise.all(
       handles.map(async (entry) => {
         try {
@@ -234,9 +243,7 @@ export class FsRpcService {
         requireUint(req.max_entries ?? 1024, "readdir", "max_entries"),
       ),
     );
-    const entries = (await this.provider.readdir(entryPath, {
-      withFileTypes: true,
-    })) as Array<string | Dirent>;
+    const entries = await this.readCachedDirEntries(entryPath);
     const start = Math.min(offset, entries.length);
 
     const responseEntries: Array<Record<string, unknown>> = [];
@@ -356,6 +363,7 @@ export class FsRpcService {
     const stats = await handle.stat();
     const ino = this.ensureIno(entryPath);
     const fh = this.allocateHandle(handle, ino, entryPath, append);
+    this.invalidateReaddirCache();
 
     return {
       entry: {
@@ -380,6 +388,7 @@ export class FsRpcService {
     await this.provider.mkdir(entryPath, { mode });
     const stats = await this.provider.stat(entryPath);
     const ino = this.ensureIno(entryPath);
+    this.invalidateReaddirCache();
 
     return {
       entry: {
@@ -410,6 +419,7 @@ export class FsRpcService {
     await provider.symlink(target, entryPath);
     const stats = await this.provider.lstat(entryPath);
     const ino = this.ensureIno(entryPath);
+    this.invalidateReaddirCache();
 
     return {
       entry: {
@@ -430,6 +440,7 @@ export class FsRpcService {
     const entryPath = normalizePath(path.posix.join(parentPath, name));
     await this.provider.unlink(entryPath);
     this.removeMapping(entryPath);
+    this.invalidateReaddirCache();
     return {};
   }
 
@@ -442,6 +453,7 @@ export class FsRpcService {
     const entryPath = normalizePath(path.posix.join(parentPath, name));
     await this.provider.rmdir(entryPath);
     this.removeMapping(entryPath);
+    this.invalidateReaddirCache();
     return {};
   }
 
@@ -471,6 +483,7 @@ export class FsRpcService {
     const newPath = normalizePath(path.posix.join(newParentPath, newName));
     await this.provider.rename(oldPath, newPath);
     this.renameMapping(oldPath, newPath);
+    this.invalidateReaddirCache();
     return {};
   }
 
@@ -498,6 +511,7 @@ export class FsRpcService {
     await provider.link(oldPath, newPath);
     const stats = await this.provider.lstat(newPath);
     const ino = this.ensureIno(newPath, oldIno);
+    this.invalidateReaddirCache();
 
     return {
       entry: {
@@ -705,6 +719,42 @@ export class FsRpcService {
             : "";
       this.logger(`op=${op} err=${err} dur=${durationMs}ms${extra}`);
     }
+  }
+
+  private async readCachedDirEntries(entryPath: string) {
+    const normalized = normalizePath(entryPath);
+    const now = Date.now();
+    const cached = this.readdirCache.get(normalized);
+    if (cached && cached.expiresAt > now) {
+      return cached.entries;
+    }
+
+    if (cached) {
+      this.readdirCache.delete(normalized);
+    }
+
+    const entries = (await this.provider.readdir(normalized, {
+      withFileTypes: true,
+    })) as Array<string | Dirent>;
+
+    if (this.readdirCache.size >= READDIR_CACHE_MAX_DIRS) {
+      const oldestKey = this.readdirCache.keys().next().value as
+        | string
+        | undefined;
+      if (oldestKey) {
+        this.readdirCache.delete(oldestKey);
+      }
+    }
+
+    this.readdirCache.set(normalized, {
+      entries,
+      expiresAt: now + READDIR_CACHE_TTL_MS,
+    });
+    return entries;
+  }
+
+  private invalidateReaddirCache() {
+    this.readdirCache.clear();
   }
 
   private ensureIno(entryPath: string, preferredIno?: number) {
