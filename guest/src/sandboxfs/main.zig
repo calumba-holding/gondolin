@@ -15,6 +15,7 @@ const FuseOp = struct {
     pub const SYMLINK: u32 = 6;
     pub const MKDIR: u32 = 9;
     pub const UNLINK: u32 = 10;
+    pub const RMDIR: u32 = 11;
     pub const RENAME: u32 = 12;
     pub const LINK: u32 = 13;
     pub const OPEN: u32 = 14;
@@ -268,6 +269,7 @@ const SandboxFs = struct {
             FuseOp.SYMLINK => try self.handleSymlink(header, payload),
             FuseOp.MKDIR => try self.handleMkdir(header, payload),
             FuseOp.UNLINK => try self.handleUnlink(header, payload),
+            FuseOp.RMDIR => try self.handleRmdir(header, payload),
             FuseOp.RENAME => try self.handleRename(header, payload),
             FuseOp.LINK => try self.handleLink(header, payload),
             FuseOp.OPEN => try self.handleOpen(header, payload),
@@ -508,6 +510,28 @@ const SandboxFs = struct {
             .{ .name = "name", .value = .{ .Text = name } },
         };
         var response = try self.rpc.?.request("unlink", &fields);
+        defer response.deinit();
+
+        if (response.err != 0) {
+            try sendError(self.fuse_fd, header.unique, errnoFromResponse(response.err));
+            return;
+        }
+
+        try sendResponse(self.fuse_fd, header.unique, 0, &.{});
+    }
+
+    fn handleRmdir(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
+        if (self.rpc == null) {
+            try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
+            return;
+        }
+
+        const name = parseName(payload);
+        var fields = [_]fs_rpc.Field{
+            .{ .name = "parent_ino", .value = .{ .UInt = header.nodeid } },
+            .{ .name = "name", .value = .{ .Text = name } },
+        };
+        var response = try self.rpc.?.request("rmdir", &fields);
         defer response.deinit();
 
         if (response.err != 0) {

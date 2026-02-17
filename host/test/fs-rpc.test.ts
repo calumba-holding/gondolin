@@ -264,6 +264,65 @@ test("fs rpc unlink removes mappings and lookup returns negative ttl", async () 
   await service.close();
 });
 
+test("fs rpc rmdir removes mappings and rejects non-empty dirs", async () => {
+  const service = createService();
+
+  const dir = await send(service, "mkdir", {
+    parent_ino: 1,
+    name: "dir",
+    mode: 0o755,
+  });
+  assert.equal(dir.p.err, 0);
+  const dirIno = (dir.p.res?.entry as { ino: number }).ino;
+
+  const child = await send(service, "mkdir", {
+    parent_ino: dirIno,
+    name: "child",
+    mode: 0o755,
+  });
+  assert.equal(child.p.err, 0);
+  const childIno = (child.p.res?.entry as { ino: number }).ino;
+
+  const nonEmpty = await send(service, "rmdir", {
+    parent_ino: 1,
+    name: "dir",
+  });
+  assert.notEqual(nonEmpty.p.err, 0);
+
+  const removedChild = await send(service, "rmdir", {
+    parent_ino: dirIno,
+    name: "child",
+  });
+  assert.equal(removedChild.p.err, 0);
+
+  const childLookup = await send(service, "lookup", {
+    parent_ino: dirIno,
+    name: "child",
+  });
+  assert.equal(childLookup.p.err, ERRNO.ENOENT);
+  assert.equal((childLookup.p.res as any)?.entry_ttl_ms, 250);
+
+  const childGetattr = await send(service, "getattr", { ino: childIno });
+  assert.equal(childGetattr.p.err, ERRNO.ENOENT);
+
+  const removedDir = await send(service, "rmdir", {
+    parent_ino: 1,
+    name: "dir",
+  });
+  assert.equal(removedDir.p.err, 0);
+
+  const dirLookup = await send(service, "lookup", {
+    parent_ino: 1,
+    name: "dir",
+  });
+  assert.equal(dirLookup.p.err, ERRNO.ENOENT);
+
+  const dirGetattr = await send(service, "getattr", { ino: dirIno });
+  assert.equal(dirGetattr.p.err, ERRNO.ENOENT);
+
+  await service.close();
+});
+
 test("fs rpc rename across dirs preserves ino and updates mapping", async () => {
   const service = createService();
 

@@ -148,6 +148,8 @@ export class FsRpcService {
         return this.handleSymlink(req);
       case "unlink":
         return this.handleUnlink(req);
+      case "rmdir":
+        return this.handleRmdir(req);
       case "rename":
         return this.handleRename(req);
       case "link":
@@ -412,6 +414,18 @@ export class FsRpcService {
     const parentPath = this.requirePath(parentIno, "unlink");
     const entryPath = normalizePath(path.posix.join(parentPath, name));
     await this.provider.unlink(entryPath);
+    this.removeMapping(entryPath);
+    return {};
+  }
+
+  private async handleRmdir(req: Record<string, unknown>) {
+    const parentIno = requireUint(req.parent_ino, "rmdir", "parent_ino");
+    const name = requireString(req.name, "rmdir", "name");
+    validateName(name, "rmdir");
+
+    const parentPath = this.requirePath(parentIno, "rmdir");
+    const entryPath = normalizePath(path.posix.join(parentPath, name));
+    await this.provider.rmdir(entryPath);
     this.removeMapping(entryPath);
     return {};
   }
