@@ -13,6 +13,7 @@ const FuseOp = struct {
     pub const SETATTR: u32 = 4;
     pub const READLINK: u32 = 5;
     pub const SYMLINK: u32 = 6;
+    pub const MKNOD: u32 = 8;
     pub const MKDIR: u32 = 9;
     pub const UNLINK: u32 = 10;
     pub const RMDIR: u32 = 11;
@@ -24,13 +25,25 @@ const FuseOp = struct {
     pub const STATFS: u32 = 17;
     pub const RELEASE: u32 = 18;
     pub const FSYNC: u32 = 20;
+    pub const SETXATTR: u32 = 21;
+    pub const GETXATTR: u32 = 22;
+    pub const LISTXATTR: u32 = 23;
+    pub const REMOVEXATTR: u32 = 24;
     pub const FLUSH: u32 = 25;
     pub const INIT: u32 = 26;
     pub const OPENDIR: u32 = 27;
     pub const READDIR: u32 = 28;
     pub const RELEASEDIR: u32 = 29;
+    pub const FSYNCDIR: u32 = 30;
     pub const ACCESS: u32 = 34;
     pub const CREATE: u32 = 35;
+    pub const INTERRUPT: u32 = 36;
+    pub const DESTROY: u32 = 38;
+    pub const IOCTL: u32 = 39;
+    pub const BATCH_FORGET: u32 = 42;
+    pub const FALLOCATE: u32 = 43;
+    pub const RENAME2: u32 = 45;
+    pub const COPY_FILE_RANGE: u32 = 47;
 };
 
 const FuseAttr = extern struct {
@@ -184,8 +197,37 @@ const FuseRenameIn = struct {
     newdir: u64,
 };
 
+const FuseRename2In = struct {
+    newdir: u64,
+    flags: u32,
+    padding: u32,
+};
+
 const FuseLinkIn = struct {
     oldnodeid: u64,
+};
+
+const FuseAccessIn = struct {
+    mask: u32,
+    padding: u32,
+};
+
+const FuseFallocateIn = struct {
+    fh: u64,
+    offset: u64,
+    length: u64,
+    mode: u32,
+    padding: u32,
+};
+
+const FuseCopyFileRangeIn = struct {
+    fh_in: u64,
+    off_in: u64,
+    nodeid_out: u64,
+    fh_out: u64,
+    off_out: u64,
+    len: u64,
+    flags: u64,
 };
 
 const FuseSetattrIn = struct {
@@ -227,12 +269,14 @@ const SandboxFs = struct {
     allocator: std.mem.Allocator,
     fuse_fd: std.posix.fd_t,
     rpc: ?fs_rpc.FsRpcClient,
+    unsupported_opcode_logged: [256]bool,
 
     pub fn init(allocator: std.mem.Allocator, fuse_fd: std.posix.fd_t, rpc: ?fs_rpc.FsRpcClient) SandboxFs {
         return .{
             .allocator = allocator,
             .fuse_fd = fuse_fd,
             .rpc = rpc,
+            .unsupported_opcode_logged = [_]bool{false} ** 256,
         };
     }
 
@@ -271,6 +315,7 @@ const SandboxFs = struct {
             FuseOp.UNLINK => try self.handleUnlink(header, payload),
             FuseOp.RMDIR => try self.handleRmdir(header, payload),
             FuseOp.RENAME => try self.handleRename(header, payload),
+            FuseOp.RENAME2 => try self.handleRename2(header, payload),
             FuseOp.LINK => try self.handleLink(header, payload),
             FuseOp.OPEN => try self.handleOpen(header, payload),
             FuseOp.OPENDIR => try self.handleOpendir(header),
@@ -281,15 +326,32 @@ const SandboxFs = struct {
             FuseOp.CREATE => try self.handleCreate(header, payload),
             FuseOp.RELEASE => try self.handleRelease(header, payload),
             FuseOp.FSYNC => try self.handleFsync(header),
+            FuseOp.FSYNCDIR => try self.handleFsyncDir(header),
             FuseOp.STATFS => try self.handleStatfs(header),
             FuseOp.FLUSH => try self.handleFlush(header),
-            FuseOp.ACCESS => try self.handleAccess(header),
-            FuseOp.FORGET => return,
-            else => {
-                log.warn("unsupported fuse opcode {}", .{header.opcode});
-                try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
-            },
+            FuseOp.ACCESS => try self.handleAccess(header, payload),
+            FuseOp.FALLOCATE => try self.handleFallocate(header, payload),
+            FuseOp.COPY_FILE_RANGE => try self.handleCopyFileRange(header, payload),
+            FuseOp.DESTROY => try sendResponse(self.fuse_fd, header.unique, 0, &.{}),
+            FuseOp.FORGET, FuseOp.BATCH_FORGET, FuseOp.INTERRUPT => return,
+            FuseOp.MKNOD,
+            FuseOp.SETXATTR,
+            FuseOp.GETXATTR,
+            FuseOp.LISTXATTR,
+            FuseOp.REMOVEXATTR,
+            => try self.sendUnsupported(header, std.os.linux.E.OPNOTSUPP),
+            FuseOp.IOCTL => try self.sendUnsupported(header, std.os.linux.E.NOTTY),
+            else => try self.sendUnsupported(header, std.os.linux.E.NOSYS),
         }
+    }
+
+    fn sendUnsupported(self: *SandboxFs, header: FuseInHeader, err: std.os.linux.E) !void {
+        const opcode = header.opcode;
+        if (opcode < self.unsupported_opcode_logged.len and !self.unsupported_opcode_logged[opcode]) {
+            self.unsupported_opcode_logged[opcode] = true;
+            log.warn("unsupported fuse opcode {} -> errno {}", .{ opcode, @intFromEnum(err) });
+        }
+        try sendError(self.fuse_fd, header.unique, err);
     }
 
     fn handleInit(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
@@ -543,23 +605,40 @@ const SandboxFs = struct {
     }
 
     fn handleRename(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
-        if (self.rpc == null) {
-            try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
-            return;
-        }
-
         const rename = try parseRename(payload);
         const names = payload[@sizeOf(FuseRenameIn)..];
         const old_name = parseName(names);
         const rest = names[old_name.len + 1 ..];
         const new_name = parseName(rest);
+        try self.handleRenameRequest(header, old_name, new_name, rename.newdir, 0);
+    }
+
+    fn handleRename2(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
+        const rename = try parseRename2(payload);
+        if (rename.flags != 0) {
+            try sendError(self.fuse_fd, header.unique, std.os.linux.E.OPNOTSUPP);
+            return;
+        }
+
+        const names = payload[@sizeOf(FuseRename2In)..];
+        const old_name = parseName(names);
+        const rest = names[old_name.len + 1 ..];
+        const new_name = parseName(rest);
+        try self.handleRenameRequest(header, old_name, new_name, rename.newdir, rename.flags);
+    }
+
+    fn handleRenameRequest(self: *SandboxFs, header: FuseInHeader, old_name: []const u8, new_name: []const u8, new_parent_ino: u64, flags: u32) !void {
+        if (self.rpc == null) {
+            try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
+            return;
+        }
 
         var fields = [_]fs_rpc.Field{
             .{ .name = "old_parent_ino", .value = .{ .UInt = header.nodeid } },
             .{ .name = "old_name", .value = .{ .Text = old_name } },
-            .{ .name = "new_parent_ino", .value = .{ .UInt = rename.newdir } },
+            .{ .name = "new_parent_ino", .value = .{ .UInt = new_parent_ino } },
             .{ .name = "new_name", .value = .{ .Text = new_name } },
-            .{ .name = "flags", .value = .{ .UInt = 0 } },
+            .{ .name = "flags", .value = .{ .UInt = flags } },
         };
         var response = try self.rpc.?.request("rename", &fields);
         defer response.deinit();
@@ -847,12 +926,89 @@ const SandboxFs = struct {
         try sendResponse(self.fuse_fd, header.unique, 0, &.{});
     }
 
+    fn handleFsyncDir(self: *SandboxFs, header: FuseInHeader) !void {
+        try sendResponse(self.fuse_fd, header.unique, 0, &.{});
+    }
+
     fn handleFlush(self: *SandboxFs, header: FuseInHeader) !void {
         try sendResponse(self.fuse_fd, header.unique, 0, &.{});
     }
 
-    fn handleAccess(self: *SandboxFs, header: FuseInHeader) !void {
+    fn handleAccess(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
+        if (self.rpc == null) {
+            try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
+            return;
+        }
+
+        const access = try parseAccess(payload);
+        var fields = [_]fs_rpc.Field{
+            .{ .name = "ino", .value = .{ .UInt = header.nodeid } },
+            .{ .name = "mask", .value = .{ .UInt = access.mask } },
+            .{ .name = "uid", .value = .{ .UInt = header.uid } },
+            .{ .name = "gid", .value = .{ .UInt = header.gid } },
+        };
+        var response = try self.rpc.?.request("access", &fields);
+        defer response.deinit();
+
+        if (response.err != 0) {
+            try sendError(self.fuse_fd, header.unique, errnoFromResponse(response.err));
+            return;
+        }
+
         try sendResponse(self.fuse_fd, header.unique, 0, &.{});
+    }
+
+    fn handleFallocate(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
+        if (self.rpc == null) {
+            try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
+            return;
+        }
+
+        const fallocate = try parseFallocate(payload);
+        var fields = [_]fs_rpc.Field{
+            .{ .name = "fh", .value = .{ .UInt = fallocate.fh } },
+            .{ .name = "offset", .value = .{ .UInt = fallocate.offset } },
+            .{ .name = "length", .value = .{ .UInt = fallocate.length } },
+            .{ .name = "mode", .value = .{ .UInt = fallocate.mode } },
+        };
+        var response = try self.rpc.?.request("fallocate", &fields);
+        defer response.deinit();
+
+        if (response.err != 0) {
+            try sendError(self.fuse_fd, header.unique, errnoFromResponse(response.err));
+            return;
+        }
+
+        try sendResponse(self.fuse_fd, header.unique, 0, &.{});
+    }
+
+    fn handleCopyFileRange(self: *SandboxFs, header: FuseInHeader, payload: []const u8) !void {
+        if (self.rpc == null) {
+            try sendError(self.fuse_fd, header.unique, std.os.linux.E.NOSYS);
+            return;
+        }
+
+        const copy = try parseCopyFileRange(payload);
+        var fields = [_]fs_rpc.Field{
+            .{ .name = "fh_in", .value = .{ .UInt = copy.fh_in } },
+            .{ .name = "off_in", .value = .{ .UInt = copy.off_in } },
+            .{ .name = "fh_out", .value = .{ .UInt = copy.fh_out } },
+            .{ .name = "off_out", .value = .{ .UInt = copy.off_out } },
+            .{ .name = "len", .value = .{ .UInt = copy.len } },
+            .{ .name = "flags", .value = .{ .UInt = copy.flags } },
+        };
+        var response = try self.rpc.?.request("copy_file_range", &fields);
+        defer response.deinit();
+
+        if (response.err != 0) {
+            try sendError(self.fuse_fd, header.unique, errnoFromResponse(response.err));
+            return;
+        }
+
+        const res_map = response.res orelse return error.InvalidResponse;
+        const size = getMapU32(res_map, "size") orelse return error.InvalidResponse;
+        const out = FuseWriteOut{ .size = size, .padding = 0 };
+        try sendResponse(self.fuse_fd, header.unique, 0, std.mem.asBytes(&out));
     }
 
     fn handleStatfs(self: *SandboxFs, header: FuseInHeader) !void {
@@ -1117,10 +1273,25 @@ fn parseMkdir(payload: []const u8) !FuseMkdirIn {
     return .{ .mode = mode, .umask = umask };
 }
 
+fn parseAccess(payload: []const u8) !FuseAccessIn {
+    var offset: usize = 0;
+    const mask = try readU32(payload, &offset);
+    const padding = try readU32(payload, &offset);
+    return .{ .mask = mask, .padding = padding };
+}
+
 fn parseRename(payload: []const u8) !FuseRenameIn {
     var offset: usize = 0;
     const newdir = try readU64(payload, &offset);
     return .{ .newdir = newdir };
+}
+
+fn parseRename2(payload: []const u8) !FuseRename2In {
+    var offset: usize = 0;
+    const newdir = try readU64(payload, &offset);
+    const flags = try readU32(payload, &offset);
+    const padding = try readU32(payload, &offset);
+    return .{ .newdir = newdir, .flags = flags, .padding = padding };
 }
 
 fn parseLink(payload: []const u8) !FuseLinkIn {
@@ -1174,6 +1345,36 @@ fn parseRelease(payload: []const u8) !FuseReleaseIn {
     const release_flags = try readU32(payload, &offset);
     const lock_owner = try readU64(payload, &offset);
     return .{ .fh = fh, .flags = flags, .release_flags = release_flags, .lock_owner = lock_owner };
+}
+
+fn parseFallocate(payload: []const u8) !FuseFallocateIn {
+    var offset: usize = 0;
+    const fh = try readU64(payload, &offset);
+    const off = try readU64(payload, &offset);
+    const length = try readU64(payload, &offset);
+    const mode = try readU32(payload, &offset);
+    const padding = try readU32(payload, &offset);
+    return .{ .fh = fh, .offset = off, .length = length, .mode = mode, .padding = padding };
+}
+
+fn parseCopyFileRange(payload: []const u8) !FuseCopyFileRangeIn {
+    var offset: usize = 0;
+    const fh_in = try readU64(payload, &offset);
+    const off_in = try readU64(payload, &offset);
+    const nodeid_out = try readU64(payload, &offset);
+    const fh_out = try readU64(payload, &offset);
+    const off_out = try readU64(payload, &offset);
+    const len = try readU64(payload, &offset);
+    const flags = try readU64(payload, &offset);
+    return .{
+        .fh_in = fh_in,
+        .off_in = off_in,
+        .nodeid_out = nodeid_out,
+        .fh_out = fh_out,
+        .off_out = off_out,
+        .len = len,
+        .flags = flags,
+    };
 }
 
 fn parseName(payload: []const u8) []const u8 {

@@ -28,6 +28,15 @@ const LINUX_OPEN_FLAGS = {
   O_APPEND: 0x400,
 };
 
+const ACCESS_MASK = {
+  X_OK: 0x1,
+  W_OK: 0x2,
+  R_OK: 0x4,
+};
+
+const ACCESS_KNOWN_MASK =
+  ACCESS_MASK.R_OK | ACCESS_MASK.W_OK | ACCESS_MASK.X_OK;
+
 export type FsRpcMetrics = {
   /** total request count */
   requests: number;
@@ -154,8 +163,14 @@ export class FsRpcService {
         return this.handleRename(req);
       case "link":
         return this.handleLink(req);
+      case "access":
+        return this.handleAccess(req);
       case "truncate":
         return this.handleTruncate(req);
+      case "fallocate":
+        return this.handleFallocate(req);
+      case "copy_file_range":
+        return this.handleCopyFileRange(req);
       case "release":
         return this.handleRelease(req);
       case "statfs":
@@ -171,7 +186,7 @@ export class FsRpcService {
     validateName(name, "lookup");
     const parentPath = this.requirePath(parentIno, "lookup");
     const entryPath = normalizePath(path.posix.join(parentPath, name));
-    const stats = await this.provider.stat(entryPath);
+    const stats = await this.provider.lstat(entryPath);
     const ino = this.ensureIno(entryPath);
     const attr = statsToAttr(ino, stats);
     return {
@@ -187,7 +202,7 @@ export class FsRpcService {
   private async handleGetattr(req: Record<string, unknown>) {
     const ino = requireUint(req.ino, "getattr", "ino");
     const entryPath = this.requirePath(ino, "getattr");
-    const stats = await this.provider.stat(entryPath);
+    const stats = await this.provider.lstat(entryPath);
     return {
       attr: statsToAttr(ino, stats),
       attr_ttl_ms: DEFAULT_ATTR_TTL_MS,
@@ -481,7 +496,7 @@ export class FsRpcService {
     }
 
     await provider.link(oldPath, newPath);
-    const stats = await this.provider.stat(newPath);
+    const stats = await this.provider.lstat(newPath);
     const ino = this.ensureIno(newPath, oldIno);
 
     return {
@@ -494,12 +509,133 @@ export class FsRpcService {
     };
   }
 
+  private async handleAccess(req: Record<string, unknown>) {
+    const ino = requireUint(req.ino, "access", "ino");
+    const mask = requireUint(req.mask ?? 0, "access", "mask");
+    const uid = requireUint(req.uid ?? 0, "access", "uid");
+    const gid = requireUint(req.gid ?? 0, "access", "gid");
+    if ((mask & ~ACCESS_KNOWN_MASK) !== 0) {
+      throw createErrnoError(ERRNO.EINVAL, "access");
+    }
+
+    const entryPath = this.requirePath(ino, "access");
+    const provider = this.provider as {
+      access?: (path: string, mode?: number) => Promise<void>;
+    };
+    if (typeof provider.access === "function") {
+      try {
+        await provider.access(entryPath, mask);
+        return {};
+      } catch (error) {
+        if (!isErrnoValue(error, ERRNO.ENOSYS)) {
+          throw error;
+        }
+      }
+    }
+
+    await checkAccessByStat(this.provider, entryPath, mask, uid, gid);
+    return {};
+  }
+
   private async handleTruncate(req: Record<string, unknown>) {
     const ino = requireUint(req.ino, "truncate", "ino");
     const size = requireUint(req.size ?? 0, "truncate", "size");
     const entryPath = this.requirePath(ino, "truncate");
     await this.truncatePath(entryPath, size);
     return {};
+  }
+
+  private async handleFallocate(req: Record<string, unknown>) {
+    const fh = requireUint(req.fh, "fallocate", "fh");
+    const offset = requireUint(req.offset ?? 0, "fallocate", "offset");
+    const length = requireUint(req.length ?? 0, "fallocate", "length");
+    const mode = requireUint(req.mode ?? 0, "fallocate", "mode");
+    if (mode !== 0) {
+      throw createErrnoError(ERRNO.EOPNOTSUPP, "fallocate");
+    }
+
+    const entry = this.getHandle(fh, "fallocate");
+    const endOffset = checkedAdd(offset, length, "fallocate");
+    const stats = await entry.handle.stat();
+    const currentSize = Number(stats.size);
+    if (!Number.isFinite(currentSize) || currentSize < 0) {
+      throw createErrnoError(ERRNO.EIO, "fallocate");
+    }
+    if (endOffset > currentSize) {
+      await entry.handle.truncate(endOffset);
+    }
+    return {};
+  }
+
+  private async handleCopyFileRange(req: Record<string, unknown>) {
+    const srcFh = requireUint(req.fh_in, "copy_file_range", "fh_in");
+    const srcOffset = requireUint(req.off_in ?? 0, "copy_file_range", "off_in");
+    const dstFh = requireUint(req.fh_out, "copy_file_range", "fh_out");
+    const dstOffset = requireUint(
+      req.off_out ?? 0,
+      "copy_file_range",
+      "off_out",
+    );
+    const length = requireUint(req.len ?? 0, "copy_file_range", "len");
+    const flags = requireUint(req.flags ?? 0, "copy_file_range", "flags");
+    if (flags !== 0 || length > 0xffffffff) {
+      throw createErrnoError(ERRNO.EINVAL, "copy_file_range");
+    }
+
+    const source = this.getHandle(srcFh, "copy_file_range");
+    const target = this.getHandle(dstFh, "copy_file_range");
+    if (length === 0) {
+      return { size: 0 };
+    }
+
+    const srcEnd = checkedAdd(srcOffset, length, "copy_file_range");
+    const dstEnd = checkedAdd(dstOffset, length, "copy_file_range");
+    const samePath = source.path === target.path;
+    const overlaps = srcOffset < dstEnd && dstOffset < srcEnd;
+    if (samePath && overlaps) {
+      throw createErrnoError(ERRNO.EINVAL, "copy_file_range");
+    }
+
+    const chunkLimit = Math.max(1, Math.min(MAX_RPC_DATA, length));
+    const buffer = Buffer.alloc(chunkLimit);
+    let copied = 0;
+    while (copied < length) {
+      const chunk = Math.min(chunkLimit, length - copied);
+      const srcPosition = checkedAdd(srcOffset, copied, "copy_file_range");
+      const { bytesRead } = await source.handle.read(
+        buffer,
+        0,
+        chunk,
+        srcPosition,
+      );
+      if (bytesRead === 0) break;
+
+      let writtenTotal = 0;
+      while (writtenTotal < bytesRead) {
+        const dstPosition = checkedAdd(
+          checkedAdd(dstOffset, copied, "copy_file_range"),
+          writtenTotal,
+          "copy_file_range",
+        );
+        const { bytesWritten } = await target.handle.write(
+          buffer,
+          writtenTotal,
+          bytesRead - writtenTotal,
+          dstPosition,
+        );
+        if (bytesWritten === 0) {
+          throw createErrnoError(ERRNO.EIO, "copy_file_range");
+        }
+        writtenTotal += bytesWritten;
+      }
+
+      copied += writtenTotal;
+      this.metrics.bytesRead += bytesRead;
+      this.metrics.bytesWritten += writtenTotal;
+      if (bytesRead < chunk) break;
+    }
+
+    return { size: copied };
   }
 
   private async handleRelease(req: Record<string, unknown>) {
@@ -563,7 +699,8 @@ export class FsRpcService {
       const extra =
         op === "read" && Buffer.isBuffer(res?.data)
           ? ` bytes=${res.data.length}`
-          : op === "write" && typeof res?.size === "number"
+          : (op === "write" || op === "copy_file_range") &&
+              typeof res?.size === "number"
             ? ` bytes=${res.size}`
             : "";
       this.logger(`op=${op} err=${err} dur=${durationMs}ms${extra}`);
@@ -825,12 +962,64 @@ async function direntType(
   }
 
   try {
-    const stats = await provider.stat(entryPath);
+    const stats = await provider.lstat(entryPath);
     if (stats.isDirectory()) return DT_DIR;
     if (stats.isSymbolicLink()) return DT_LNK;
     return DT_REG;
   } catch {
     return DT_REG;
+  }
+}
+
+function checkedAdd(left: number, right: number, op: string) {
+  const sum = left + right;
+  if (!Number.isSafeInteger(sum)) {
+    throw createErrnoError(ERRNO.EINVAL, op);
+  }
+  return sum;
+}
+
+async function checkAccessByStat(
+  provider: VirtualProvider,
+  entryPath: string,
+  mask: number,
+  uid: number,
+  gid: number,
+) {
+  const stats = await provider.stat(entryPath);
+  if (mask === 0) {
+    return;
+  }
+
+  if ((mask & ACCESS_MASK.W_OK) !== 0 && provider.readonly) {
+    throw createErrnoError(ERRNO.EROFS, "access", entryPath);
+  }
+
+  const modeBits = Number(stats.mode) & 0o777;
+  if (!Number.isInteger(modeBits)) {
+    throw createErrnoError(ERRNO.EIO, "access", entryPath);
+  }
+
+  if (uid === 0) {
+    if ((mask & ACCESS_MASK.X_OK) !== 0 && (modeBits & 0o111) === 0) {
+      throw createErrnoError(ERRNO.EACCES, "access", entryPath);
+    }
+    return;
+  }
+
+  const ownerUid = Number.isInteger(stats.uid) ? Number(stats.uid) : -1;
+  const ownerGid = Number.isInteger(stats.gid) ? Number(stats.gid) : -1;
+  const shift = uid === ownerUid ? 6 : gid === ownerGid ? 3 : 0;
+  const granted = (modeBits >> shift) & 0o7;
+
+  if ((mask & ACCESS_MASK.R_OK) !== 0 && (granted & 0o4) === 0) {
+    throw createErrnoError(ERRNO.EACCES, "access", entryPath);
+  }
+  if ((mask & ACCESS_MASK.W_OK) !== 0 && (granted & 0o2) === 0) {
+    throw createErrnoError(ERRNO.EACCES, "access", entryPath);
+  }
+  if ((mask & ACCESS_MASK.X_OK) !== 0 && (granted & 0o1) === 0) {
+    throw createErrnoError(ERRNO.EACCES, "access", entryPath);
   }
 }
 

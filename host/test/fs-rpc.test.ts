@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { MemoryProvider, RealFSProvider } from "../src/vfs/node";
+import { ReadonlyProvider } from "../src/vfs/readonly";
 import { FsRpcService, MAX_RPC_DATA } from "../src/vfs/rpc-service";
 
 const { errno: ERRNO } = os.constants;
@@ -20,6 +21,7 @@ const LINUX_OPEN_FLAGS = {
 
 const DT_DIR = 4;
 const DT_REG = 8;
+const DT_LNK = 10;
 
 function createService() {
   return new FsRpcService(new MemoryProvider());
@@ -607,6 +609,252 @@ test("fs rpc symlink creates symbolic links with RealFSProvider", async () => {
   }
 });
 
+test("fs rpc lookup/getattr/readdir use lstat for dangling symlinks", async () => {
+  const service = createService();
+
+  const linked = await send(service, "symlink", {
+    parent_ino: 1,
+    name: "dangling",
+    target: "missing-target",
+  });
+  assert.equal(linked.p.err, 0);
+
+  const lookup = await send(service, "lookup", {
+    parent_ino: 1,
+    name: "dangling",
+  });
+  assert.equal(lookup.p.err, 0);
+  const ino = (lookup.p.res?.entry as any).ino as number;
+
+  const getattr = await send(service, "getattr", { ino });
+  assert.equal(getattr.p.err, 0);
+  const mode = ((getattr.p.res?.attr as any)?.mode ?? 0) as number;
+  assert.equal(mode & 0o170000, 0o120000);
+
+  const readdir = await send(service, "readdir", {
+    ino: 1,
+    offset: 0,
+    max_entries: 128,
+  });
+  assert.equal(readdir.p.err, 0);
+  const entries =
+    (readdir.p.res?.entries as Array<{ name: string; type: number }>) ?? [];
+  const dangling = entries.find((entry) => entry.name === "dangling");
+  assert.ok(dangling);
+  assert.equal(dangling?.type, DT_LNK);
+
+  await service.close();
+});
+
+test("fs rpc access falls back to stat-based permission checks", async () => {
+  const base = new MemoryProvider();
+  const provider = new Proxy(base as any, {
+    get(target, prop, receiver) {
+      if (prop === "access") {
+        return undefined;
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+  const service = new FsRpcService(provider);
+
+  const created = await send(service, "create", {
+    parent_ino: 1,
+    name: "perm.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+  assert.equal(created.p.err, 0);
+  const ino = (created.p.res?.entry as any).ino as number;
+  const fh = created.p.res?.fh as number;
+  await send(service, "release", { fh });
+
+  const readOk = await send(service, "access", {
+    ino,
+    mask: 4,
+    uid: 1234,
+    gid: 1234,
+  });
+  assert.equal(readOk.p.err, 0);
+
+  const execDenied = await send(service, "access", {
+    ino,
+    mask: 1,
+    uid: 1234,
+    gid: 1234,
+  });
+  assert.equal(execDenied.p.err, ERRNO.EACCES);
+
+  const invalidMask = await send(service, "access", {
+    ino,
+    mask: 8,
+    uid: 1234,
+    gid: 1234,
+  });
+  assert.equal(invalidMask.p.err, ERRNO.EINVAL);
+
+  await service.close();
+});
+
+test("fs rpc access returns EROFS for write checks on readonly providers", async () => {
+  const base = new MemoryProvider();
+  const setup = await base.open("/ro.txt", "w+");
+  await setup.writeFile("readonly");
+  await setup.close();
+
+  const readonly = new ReadonlyProvider(base);
+  const provider = new Proxy(readonly as any, {
+    get(target, prop, receiver) {
+      if (prop === "access") {
+        return undefined;
+      }
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value === "function") return value.bind(target);
+      return value;
+    },
+  });
+  const service = new FsRpcService(provider);
+
+  const lookup = await send(service, "lookup", {
+    parent_ino: 1,
+    name: "ro.txt",
+  });
+  assert.equal(lookup.p.err, 0);
+  const ino = (lookup.p.res?.entry as any).ino as number;
+
+  const writeDenied = await send(service, "access", {
+    ino,
+    mask: 2,
+    uid: 1234,
+    gid: 1234,
+  });
+  assert.equal(writeDenied.p.err, ERRNO.EROFS);
+
+  await service.close();
+});
+
+test("fs rpc fallocate extends files and rejects unsupported modes", async () => {
+  const service = createService();
+
+  const created = await send(service, "create", {
+    parent_ino: 1,
+    name: "alloc.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+  assert.equal(created.p.err, 0);
+  const ino = (created.p.res?.entry as any).ino as number;
+  const fh = created.p.res?.fh as number;
+
+  const write = await send(service, "write", {
+    fh,
+    offset: 0,
+    data: Buffer.from("ab"),
+  });
+  assert.equal(write.p.err, 0);
+
+  const fallocate = await send(service, "fallocate", {
+    fh,
+    offset: 10,
+    length: 5,
+    mode: 0,
+  });
+  assert.equal(fallocate.p.err, 0);
+
+  const getattr = await send(service, "getattr", { ino });
+  assert.equal(getattr.p.err, 0);
+  const size = Number((getattr.p.res?.attr as any)?.size ?? -1);
+  assert.equal(size, 15);
+
+  const unsupportedMode = await send(service, "fallocate", {
+    fh,
+    offset: 0,
+    length: 1,
+    mode: 1,
+  });
+  assert.equal(unsupportedMode.p.err, ERRNO.EOPNOTSUPP);
+
+  await send(service, "release", { fh });
+  await service.close();
+});
+
+test("fs rpc copy_file_range emulates in-kernel copy", async () => {
+  const service = createService();
+
+  const src = await send(service, "create", {
+    parent_ino: 1,
+    name: "src.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+  assert.equal(src.p.err, 0);
+  const srcFh = src.p.res?.fh as number;
+
+  const dst = await send(service, "create", {
+    parent_ino: 1,
+    name: "dst.txt",
+    mode: 0o644,
+    flags: 0,
+  });
+  assert.equal(dst.p.err, 0);
+  const dstFh = dst.p.res?.fh as number;
+
+  const seed = await send(service, "write", {
+    fh: srcFh,
+    offset: 0,
+    data: Buffer.from("hello world"),
+  });
+  assert.equal(seed.p.err, 0);
+
+  const copied = await send(service, "copy_file_range", {
+    fh_in: srcFh,
+    off_in: 0,
+    fh_out: dstFh,
+    off_out: 0,
+    len: 5,
+    flags: 0,
+  });
+  assert.equal(copied.p.err, 0);
+  assert.equal(copied.p.res?.size, 5);
+
+  const dstRead = await send(service, "read", {
+    fh: dstFh,
+    offset: 0,
+    size: 16,
+  });
+  assert.equal(dstRead.p.err, 0);
+  assert.equal(
+    Buffer.from(dstRead.p.res?.data as Buffer).toString("utf8"),
+    "hello",
+  );
+
+  const invalidFlags = await send(service, "copy_file_range", {
+    fh_in: srcFh,
+    off_in: 0,
+    fh_out: dstFh,
+    off_out: 0,
+    len: 1,
+    flags: 1,
+  });
+  assert.equal(invalidFlags.p.err, ERRNO.EINVAL);
+
+  const overlap = await send(service, "copy_file_range", {
+    fh_in: srcFh,
+    off_in: 0,
+    fh_out: srcFh,
+    off_out: 1,
+    len: 2,
+    flags: 0,
+  });
+  assert.equal(overlap.p.err, ERRNO.EINVAL);
+
+  await send(service, "release", { fh: srcFh });
+  await send(service, "release", { fh: dstFh });
+  await service.close();
+});
+
 test("fs rpc open flags: O_CREAT rejected; O_TRUNC truncates; O_APPEND appends", async () => {
   const service = createService();
 
@@ -714,7 +962,7 @@ test("fs rpc normalizeError includes message and maps unknown errors to EIO", as
   const base = new MemoryProvider();
   const provider = new Proxy(base as any, {
     get(target, prop, receiver) {
-      if (prop === "stat") {
+      if (prop === "lstat") {
         return async (_p: string) => {
           throw { errno: ERRNO.EPERM, message: "nope" };
         };
@@ -731,7 +979,7 @@ test("fs rpc normalizeError includes message and maps unknown errors to EIO", as
 
   const provider2 = new Proxy(base as any, {
     get(target, prop, receiver) {
-      if (prop === "stat") {
+      if (prop === "lstat") {
         return async (_p: string) => {
           throw "boom";
         };

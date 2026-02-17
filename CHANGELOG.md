@@ -8,6 +8,9 @@ All notable changes to Gondolin are documented here.
 - Add VM registry and `gondolin attach`/`gondolin list` CLI commands to manage and connect to running VMs
 - Fix `gondolin build` post-build `chroot` commands that require `/proc` by mounting procfs during hook execution
 - Add `rmdir` support in `sandboxfs` fs-rpc so removing directories on VFS mounts no longer returns `ENOSYS`
+- Improve `sandboxfs` FUSE compatibility with `RENAME2`, `FSYNCDIR`, `FALLOCATE`, and `COPY_FILE_RANGE` support via fs-rpc
+- Improve FUSE fallback behavior by mapping `ioctl` to `ENOTTY`, mknod/xattr ops to `EOPNOTSUPP`, and logging unsupported opcodes only once
+- Fix VFS metadata and permission checks by using `lstat` for symlink-sensitive paths and adding stat-based `access` fallback
 
 ## 0.3.0
 
