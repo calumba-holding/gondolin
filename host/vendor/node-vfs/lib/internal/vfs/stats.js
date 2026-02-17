@@ -48,6 +48,7 @@ function msToTimeSpec(ms) {
  * @param {number} [options.mtimeMs] Modification time in ms
  * @param {number} [options.ctimeMs] Change time in ms
  * @param {number} [options.birthtimeMs] Birth time in ms
+ * @param {number} [options.nlink] Link count
  * @returns {Stats}
  */
 function createFileStats(size, options = {}) {
@@ -68,7 +69,9 @@ function createFileStats(size, options = {}) {
 
   statsArray[0] = 0;              // dev
   statsArray[1] = mode;           // mode
-  statsArray[2] = 1;              // nlink
+  // XXX(patch): Custom code/changes added for Gondolin
+  // Preserve provider-reported hard-link counts for virtual files
+  statsArray[2] = options.nlink ?? 1; // nlink
   statsArray[3] = uid;            // uid
   statsArray[4] = gid;            // gid
   statsArray[5] = 0;              // rdev

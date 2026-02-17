@@ -8,6 +8,7 @@ const {
 } = primordials;
 
 const { Buffer } = require('buffer');
+const { posix: pathPosix } = require('path');
 const { VirtualProvider } = require('internal/vfs/provider');
 const { MemoryFileHandle } = require('internal/vfs/file_handle');
 const {
@@ -57,6 +58,9 @@ const TYPE_SYMLINK = 2;
 // Maximum symlink resolution depth
 const kMaxSymlinkDepth = 40;
 
+// XXX(patch): Custom code/changes added for Gondolin
+// This vendored provider carries local hard-link/stat compatibility additions
+
 /**
  * Internal entry representation for MemoryProvider.
  */
@@ -70,6 +74,9 @@ class MemoryEntry {
     this.children = null; // For directories
     this.populate = null; // For directories - lazy population callback
     this.populated = true; // For directories - has populate been called?
+    // XXX(patch): Custom code/changes added for Gondolin
+    // Tracks hard-link references for regular files
+    this.linkCount = 1;
     const now = DateNow();
     this.mtime = now;
     this.ctime = now;
@@ -169,27 +176,14 @@ class MemoryProvider extends VirtualProvider {
    * @returns {string} Normalized path
    */
   _normalizePath(path) {
-    // Normalize slashes
+    // Convert backslashes to forward slashes
     let normalized = path.replace(/\\/g, '/');
+    // Ensure absolute path
     if (!normalized.startsWith('/')) {
       normalized = '/' + normalized;
     }
-
-    // Split into segments and resolve . and ..
-    const segments = normalized.split('/').filter((s) => s !== '' && s !== '.');
-    const resolved = [];
-    for (const segment of segments) {
-      if (segment === '..') {
-        // Go up one level (but don't go above root)
-        if (resolved.length > 0) {
-          resolved.pop();
-        }
-      } else {
-        resolved.push(segment);
-      }
-    }
-
-    return '/' + resolved.join('/');
+    // Use path.posix.normalize to resolve . and ..
+    return pathPosix.normalize(normalized);
   }
 
   /**
@@ -213,11 +207,7 @@ class MemoryProvider extends VirtualProvider {
     if (path === '/') {
       return null;
     }
-    const lastSlash = path.lastIndexOf('/');
-    if (lastSlash === 0) {
-      return '/';
-    }
-    return path.slice(0, lastSlash);
+    return pathPosix.dirname(path);
   }
 
   /**
@@ -226,8 +216,7 @@ class MemoryProvider extends VirtualProvider {
    * @returns {string} Base name
    */
   _getBaseName(path) {
-    const lastSlash = path.lastIndexOf('/');
-    return path.slice(lastSlash + 1);
+    return pathPosix.basename(path);
   }
 
   /**
@@ -241,11 +230,8 @@ class MemoryProvider extends VirtualProvider {
       return this._normalizePath(target);
     }
     // Relative target: resolve against symlink's parent directory
-    const parentPath = this._getParentPath(symlinkPath);
-    if (parentPath === null) {
-      return this._normalizePath('/' + target);
-    }
-    return this._normalizePath(parentPath + '/' + target);
+    const parentPath = this._getParentPath(symlinkPath) || '/';
+    return this._normalizePath(pathPosix.join(parentPath, target));
   }
 
   /**
@@ -264,7 +250,7 @@ class MemoryProvider extends VirtualProvider {
 
     const segments = this._splitPath(normalized);
     let current = this[kRoot];
-    let currentPath = '';
+    let currentPath = '/';
 
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
@@ -291,14 +277,14 @@ class MemoryProvider extends VirtualProvider {
       }
 
       // Ensure directory is populated before accessing children
-      this._ensurePopulated(current, currentPath || '/');
+      this._ensurePopulated(current, currentPath);
 
       const entry = current.children.get(segment);
       if (!entry) {
         return { entry: null, resolvedPath: null };
       }
 
-      currentPath = currentPath + '/' + segment;
+      currentPath = pathPosix.join(currentPath, segment);
       current = entry;
     }
 
@@ -353,7 +339,7 @@ class MemoryProvider extends VirtualProvider {
 
       // Follow symlinks in parent path
       if (current.isSymbolicLink()) {
-        const currentPath = '/' + segments.slice(0, i).join('/');
+        const currentPath = pathPosix.join('/', ...segments.slice(0, i));
         const targetPath = this._resolveSymlinkTarget(currentPath, current.target);
         const result = this._lookupEntry(targetPath, true, 0);
         if (!result.entry) {
@@ -367,8 +353,8 @@ class MemoryProvider extends VirtualProvider {
       }
 
       // Ensure directory is populated before accessing children
-      const currentPath = '/' + segments.slice(0, i).join('/');
-      this._ensurePopulated(current, currentPath || '/');
+      const currentPath = pathPosix.join('/', ...segments.slice(0, i));
+      this._ensurePopulated(current, currentPath);
 
       let entry = current.children.get(segment);
       if (!entry) {
@@ -388,7 +374,7 @@ class MemoryProvider extends VirtualProvider {
     }
 
     // Ensure final directory is populated
-    const finalPath = '/' + segments.join('/');
+    const finalPath = pathPosix.join('/', ...segments);
     this._ensurePopulated(current, finalPath);
 
     return current;
@@ -409,7 +395,12 @@ class MemoryProvider extends VirtualProvider {
     };
 
     if (entry.isFile()) {
-      return createFileStats(size !== undefined ? size : entry.content.length, options);
+      // XXX(patch): Custom code/changes added for Gondolin
+      // Surface hard-link counts in file stats for MemoryProvider
+      return createFileStats(size !== undefined ? size : entry.content.length, {
+        ...options,
+        nlink: entry.linkCount ?? 1,
+      });
     } else if (entry.isDirectory()) {
       return createDirectoryStats(options);
     } else if (entry.isSymbolicLink()) {
@@ -578,10 +569,10 @@ class MemoryProvider extends VirtualProvider {
       // Create all parent directories
       const segments = this._splitPath(normalized);
       let current = this[kRoot];
-      let currentPath = '';
+      let currentPath = '/';
 
       for (const segment of segments) {
-        currentPath = currentPath + '/' + segment;
+        currentPath = pathPosix.join(currentPath, segment);
         let entry = current.children.get(segment);
         if (!entry) {
           entry = new MemoryEntry(TYPE_DIR, { mode: options?.mode });
@@ -647,6 +638,12 @@ class MemoryProvider extends VirtualProvider {
     const parent = this._ensureParent(normalized, false, 'unlink');
     const name = this._getBaseName(normalized);
     parent.children.delete(name);
+
+    // XXX(patch): Custom code/changes added for Gondolin
+    // Track link reference counts for in-memory hard links
+    if (entry.isFile() && typeof entry.linkCount === 'number' && entry.linkCount > 0) {
+      entry.linkCount -= 1;
+    }
   }
 
   async unlink(path) {
@@ -672,11 +669,53 @@ class MemoryProvider extends VirtualProvider {
     // Add to new location
     const newParent = this._ensureParent(normalizedNew, true, 'rename');
     const newName = this._getBaseName(normalizedNew);
+
+    // XXX(patch): Custom code/changes added for Gondolin
+    // Keep link counts consistent when rename replaces an existing file entry
+    const replaced = newParent.children.get(newName);
+    if (replaced && replaced !== entry && replaced.isFile()) {
+      replaced.linkCount = Math.max(0, (replaced.linkCount ?? 1) - 1);
+    }
+
     newParent.children.set(newName, entry);
   }
 
   async rename(oldPath, newPath) {
     this.renameSync(oldPath, newPath);
+  }
+
+  // XXX(patch): Custom code/changes added for Gondolin
+  // Add in-memory hard-link support so fs-rpc LINK works on MemoryProvider
+  linkSync(existingPath, newPath) {
+    if (this.readonly) {
+      throw createEROFS('link', newPath);
+    }
+
+    const normalizedExisting = this._normalizePath(existingPath);
+    const normalizedNew = this._normalizePath(newPath);
+
+    const entry = this._getEntry(normalizedExisting, 'link', true);
+    if (entry.isDirectory()) {
+      throw createEISDIR('link', existingPath);
+    }
+
+    const existingTarget = this._lookupEntry(normalizedNew, false);
+    if (existingTarget.entry) {
+      throw createEEXIST('link', newPath);
+    }
+
+    const parent = this._ensureParent(normalizedNew, true, 'link');
+    const name = this._getBaseName(normalizedNew);
+    parent.children.set(name, entry);
+
+    if (entry.isFile()) {
+      entry.linkCount = (entry.linkCount ?? 1) + 1;
+      entry.ctime = DateNow();
+    }
+  }
+
+  async link(existingPath, newPath) {
+    this.linkSync(existingPath, newPath);
   }
 
   readlinkSync(path, options) {

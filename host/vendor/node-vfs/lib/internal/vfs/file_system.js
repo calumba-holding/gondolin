@@ -13,12 +13,40 @@ const {
 } = require('internal/errors');
 const { validateBoolean } = require('internal/validators');
 const { MemoryProvider } = require('internal/vfs/providers/memory');
+const path = require('path');
+const pathPosix = path.posix;
+const { isAbsolute, resolve: resolvePath } = path;
+
+/**
+ * Normalizes a VFS path. Uses POSIX normalization for Unix-style paths (starting with /)
+ * and platform normalization for Windows drive letter paths.
+ * @param {string} inputPath The path to normalize
+ * @returns {string} The normalized path
+ */
+function normalizeVFSPath(inputPath) {
+  // If path starts with / (Unix-style), use posix normalization to preserve forward slashes
+  if (inputPath.startsWith('/')) {
+    return pathPosix.normalize(inputPath);
+  }
+  // Otherwise use platform normalization (for Windows drive letters like C:\)
+  return path.normalize(inputPath);
+}
+
+/**
+ * Joins VFS paths. Uses POSIX join for Unix-style base paths.
+ * @param {string} base The base path
+ * @param {string} part The path part to join
+ * @returns {string} The joined path
+ */
+function joinVFSPath(base, part) {
+  if (base.startsWith('/')) {
+    return pathPosix.join(base, part);
+  }
+  return path.join(base, part);
+}
 const {
-  normalizePath,
   isUnderMountPoint,
   getRelativePath,
-  joinMountPath,
-  isAbsolutePath,
 } = require('internal/vfs/router');
 const {
   openVirtualFd,
@@ -201,18 +229,18 @@ class VirtualFileSystem {
    */
   resolvePath(inputPath) {
     // If path is absolute, return as-is
-    if (isAbsolutePath(inputPath)) {
-      return normalizePath(inputPath);
+    if (isAbsolute(inputPath)) {
+      return normalizeVFSPath(inputPath);
     }
 
     // If virtual cwd is enabled and set, resolve relative to it
     if (this[kVirtualCwdEnabled] && this[kVirtualCwd] !== null) {
       const resolved = `${this[kVirtualCwd]}/${inputPath}`;
-      return normalizePath(resolved);
+      return normalizeVFSPath(resolved);
     }
 
-    // Fall back to normalizing the path (will use real cwd)
-    return normalizePath(inputPath);
+    // Fall back to resolving the path (will use real cwd)
+    return resolvePath(inputPath);
   }
 
   // ==================== Mount ====================
@@ -226,7 +254,7 @@ class VirtualFileSystem {
     if (this[kMounted]) {
       throw new ERR_INVALID_STATE('VFS is already mounted');
     }
-    this[kMountPoint] = normalizePath(prefix);
+    this[kMountPoint] = normalizeVFSPath(prefix);
     this[kMounted] = true;
     if (this[kModuleHooks]) {
       loadModuleHooks();
@@ -235,6 +263,14 @@ class VirtualFileSystem {
     if (this[kVirtualCwdEnabled]) {
       this._hookProcessCwd();
     }
+
+    // Emit mount event for security monitoring
+    process.emit('vfs-mount', {
+      mountPoint: this[kMountPoint],
+      overlay: this[kOverlay],
+      readonly: this[kProvider].readonly,
+    });
+
     return this;
   }
 
@@ -242,6 +278,15 @@ class VirtualFileSystem {
    * Unmounts the VFS.
    */
   unmount() {
+    // Emit unmount event before clearing state (only if currently mounted)
+    if (this[kMounted]) {
+      process.emit('vfs-unmount', {
+        mountPoint: this[kMountPoint],
+        overlay: this[kOverlay],
+        readonly: this[kProvider].readonly,
+      });
+    }
+
     this._unhookProcessCwd();
     if (this[kModuleHooks]) {
       loadModuleHooks();
@@ -277,7 +322,10 @@ class VirtualFileSystem {
     this[kOriginalCwd] = process.cwd;
 
     process.chdir = function chdir(directory) {
-      const normalized = normalizePath(directory);
+      // Normalize path for VFS comparison (preserves forward slashes for Unix-style paths)
+      const normalized = isAbsolute(directory) ?
+        normalizeVFSPath(directory) :
+        resolvePath(directory);
 
       if (vfs.shouldHandle(normalized)) {
         vfs.chdir(normalized);
@@ -341,7 +389,7 @@ class VirtualFileSystem {
    */
   _toMountedPath(providerPath) {
     if (this[kMounted] && this[kMountPoint]) {
-      return joinMountPath(this[kMountPoint], providerPath);
+      return joinVFSPath(this[kMountPoint], providerPath);
     }
     return providerPath;
   }
@@ -358,7 +406,7 @@ class VirtualFileSystem {
       return false;
     }
 
-    const normalized = normalizePath(inputPath);
+    const normalized = normalizeVFSPath(inputPath);
     if (!isUnderMountPoint(normalized, this[kMountPoint])) {
       return false;
     }

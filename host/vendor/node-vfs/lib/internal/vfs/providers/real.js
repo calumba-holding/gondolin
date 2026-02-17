@@ -18,6 +18,10 @@ const {
 
 const { errno: ERRNO } = os.constants;
 
+// XXX(patch): Custom code/changes added for Gondolin
+// This vendored provider intentionally carries local security/compat extensions
+// (symlink-escape hardening, hard-link support wiring, and statfs support)
+
 /**
  * A file handle that wraps a real file descriptor.
  */
@@ -163,6 +167,7 @@ class RealFSProvider extends VirtualProvider {
     if (typeof rootPath !== 'string' || rootPath === '') {
       throw new ERR_INVALID_ARG_VALUE('rootPath', rootPath, 'must be a non-empty string');
     }
+    // XXX(patch): Custom code/changes added for Gondolin
     // Resolve to absolute path and normalize.
     //
     // On macOS (and some Linux setups) common temp paths (e.g. /var/...) may be
@@ -193,6 +198,7 @@ class RealFSProvider extends VirtualProvider {
     return true;
   }
 
+  // XXX(patch): Custom code/changes added for Gondolin
   // _resolvePathLexical: lexical containment only
   // _resolvePathFollow: lexical + realpath verification
   // _resolvePathNoFollowFinal: validates ancestors via follow checks, but treats final path segment lexically
@@ -383,6 +389,7 @@ class RealFSProvider extends VirtualProvider {
     return fs.promises.rename(oldRealPath, newRealPath);
   }
 
+  // XXX(patch): Custom code/changes added for Gondolin
   linkSync(existingVfsPath, newVfsPath) {
     const existingRealPath = this._resolvePathFollow(existingVfsPath);
     const newRealPath = this._resolvePathNoFollowFinal(newVfsPath);
@@ -466,6 +473,7 @@ class RealFSProvider extends VirtualProvider {
     return fs.promises.copyFile(srcRealPath, destRealPath, mode);
   }
 
+  // XXX(patch): Custom code/changes added for Gondolin
   async statfs(vfsPath) {
     if (typeof fs.promises.statfs !== 'function') {
       const err = new Error('ENOSYS: statfs');

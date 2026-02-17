@@ -11,6 +11,7 @@ All notable changes to Gondolin are documented here.
 - Improve `sandboxfs` FUSE compatibility with `RENAME2`, `FSYNCDIR`, `FALLOCATE`, and `COPY_FILE_RANGE` support via fs-rpc
 - Improve FUSE fallback behavior by mapping `ioctl` to `ENOTTY`, mknod/xattr ops to `EOPNOTSUPP`, and logging unsupported opcodes only once
 - Fix VFS metadata and permission checks by using `lstat` for symlink-sensitive paths and adding stat-based `access` fallback
+- Update vendored `node:vfs` sources/docs to Node.js PR #61478 (including Windows path normalization fixes, mount lifecycle events, and expanded API limitations docs), while keeping Gondolin-specific provider patches (`RealFSProvider` hardening/extensions and `MemoryProvider` hard-link support)
 
 ## 0.3.0
 

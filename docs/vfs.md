@@ -4,6 +4,13 @@ Gondolin exposes a programmable Virtual File System (VFS) to the guest. The VFS
 is backed by host-side providers (JavaScript objects) and is mounted into the
 guest via FUSE.
 
+> **Implementation note:** Gondolin does not use Node's VFS implementation
+> unchanged.  We vendor a snapshot and maintain local patches needed for
+> real-Linux behavior in the VM/FUSE/RPC path (for example hard-link and stat
+> semantics, plus RealFS hardening).  In code, these changes are marked with
+> `XXX(patch)` comments under `host/vendor/node-vfs`.  See also the upstreaming
+> discussion/patch context in [node#61478](https://github.com/nodejs/node/pull/61478).
+
 This page documents the built-in providers shipped with the JavaScript SDK and
 common patterns for safely sharing a workspace with a sandboxed VM.
 

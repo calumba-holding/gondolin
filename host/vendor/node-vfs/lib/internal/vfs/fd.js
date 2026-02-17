@@ -10,8 +10,7 @@ const kFd = Symbol('kFd');
 const kEntry = Symbol('kEntry');
 
 // FD range: 10000+ to avoid conflicts with real fds
-const VFS_FD_BASE = 10_000;
-let nextFd = VFS_FD_BASE;
+let nextFd = 10_000;
 
 // Global registry of open virtual file descriptors
 const openFDs = new SafeMap();
@@ -79,7 +78,6 @@ function closeVirtualFd(fd) {
 
 module.exports = {
   VirtualFD,
-  VFS_FD_BASE,
   openVirtualFd,
   getVirtualFd,
   closeVirtualFd,

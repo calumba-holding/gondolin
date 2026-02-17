@@ -1,15 +1,21 @@
 # Node VFS (vendored)
 
 This directory contains the `node:vfs` implementation and documentation vendored
-from the upstream Node.js PR branch `vfs` for reference while the API is still
+from upstream Node.js pull request #61478 for reference while the API is still
 pre-release.
 
 Source:
-- Repository: /tmp/node
-- Branch: vfs
-- Commit: 1300143a2c5861e27a8629e954509f115f07af2b
+- Repository: https://github.com/nodejs/node
+- Branch: pull/61478 (`pr-61478` local checkout)
+- Commit: 164ba613e6130916ba7d21f9ef68486c3efb52ea
 
 Files included:
 - `lib/vfs.js`
 - `lib/internal/vfs/**`
 - `doc/api/vfs.md`
+
+Local Gondolin patches:
+- `lib/internal/vfs/providers/real.js` is intentionally kept with Gondolin hardening/extensions (`link`, `statfs`, symlink escape protection, canonical root handling)
+- `lib/internal/vfs/providers/memory.js` adds in-memory hard-link support used by host fs-rpc/FUSE paths
+- `lib/internal/vfs/stats.js` preserves provider-reported `nlink` for virtual file stats
+- Customizations are marked inline with `XXX(patch): Custom code/changes added for Gondolin`

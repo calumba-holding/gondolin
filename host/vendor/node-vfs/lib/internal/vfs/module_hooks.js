@@ -5,12 +5,28 @@ const {
   ArrayPrototypePush,
   ArrayPrototypeSplice,
   FunctionPrototypeCall,
-  StringPrototypeEndsWith,
   StringPrototypeStartsWith,
 } = primordials;
 
-const { dirname, isAbsolute, resolve } = require('path');
-const { normalizePath } = require('internal/vfs/router');
+const path = require('path');
+const { dirname, extname, isAbsolute, resolve } = path;
+const pathPosix = path.posix;
+const { extensionFormatMap } = require('internal/modules/esm/formats');
+
+/**
+ * Normalizes a VFS path. Uses POSIX normalization for Unix-style paths (starting with /)
+ * and platform normalization for Windows drive letter paths.
+ * @param {string} inputPath The path to normalize
+ * @returns {string} The normalized path
+ */
+function normalizeVFSPath(inputPath) {
+  // If path starts with / (Unix-style), use posix normalization to preserve forward slashes
+  if (inputPath.startsWith('/')) {
+    return pathPosix.normalize(inputPath);
+  }
+  // Otherwise use platform normalization (for Windows drive letters like C:\)
+  return path.normalize(inputPath);
+}
 const { isURL, pathToFileURL, fileURLToPath, toPathIfFileURL, URL } = require('internal/url');
 const { kEmptyObject } = require('internal/util');
 const { validateObject } = require('internal/validators');
@@ -80,7 +96,7 @@ function unregisterVFS(vfs) {
  * @returns {{ vfs: VirtualFileSystem, result: number }|null}
  */
 function findVFSForStat(filename) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -102,7 +118,7 @@ function findVFSForStat(filename) {
  * @returns {{ vfs: VirtualFileSystem, content: Buffer|string }|null}
  */
 function findVFSForRead(filename, options) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -141,7 +157,7 @@ function findVFSForRead(filename, options) {
  * @returns {{ vfs: VirtualFileSystem, exists: boolean }|null}
  */
 function findVFSForExists(filename) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -162,7 +178,7 @@ function findVFSForExists(filename) {
  * @returns {{ vfs: VirtualFileSystem, realpath: string }|null}
  */
 function findVFSForRealpath(filename) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -189,7 +205,7 @@ function findVFSForRealpath(filename) {
  * @returns {{ vfs: VirtualFileSystem, stats: Stats }|null}
  */
 function findVFSForFsStat(filename) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -217,7 +233,7 @@ function findVFSForFsStat(filename) {
  * @returns {{ vfs: VirtualFileSystem, entries: string[]|Dirent[] }|null}
  */
 function findVFSForReaddir(dirname, options) {
-  const normalized = normalizePath(dirname);
+  const normalized = normalizeVFSPath(dirname);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -245,7 +261,7 @@ function findVFSForReaddir(dirname, options) {
  * @returns {Promise<{ vfs: VirtualFileSystem, entries: string[]|Dirent[] }|null>}
  */
 async function findVFSForReaddirAsync(dirname, options) {
-  const normalized = normalizePath(dirname);
+  const normalized = normalizeVFSPath(dirname);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -272,7 +288,7 @@ async function findVFSForReaddirAsync(dirname, options) {
  * @returns {Promise<{ vfs: VirtualFileSystem, stats: Stats }|null>}
  */
 async function findVFSForLstatAsync(filename) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -300,7 +316,7 @@ async function findVFSForLstatAsync(filename) {
  * @returns {{ vfs: VirtualFileSystem }|null}
  */
 function findVFSForWatch(filename) {
-  const normalized = normalizePath(filename);
+  const normalized = normalizeVFSPath(filename);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized)) {
@@ -322,22 +338,18 @@ function findVFSForWatch(filename) {
 
 /**
  * Determine module format from file extension.
- * @param {string} url The file URL
- * @returns {string} The format ('module', 'commonjs', or 'json')
+ * Uses the shared extensionFormatMap, falling back to commonjs for .js
+ * and unknown extensions since VFS does not check package.json "type".
+ * @param {string} filePath The file path
+ * @returns {string} The format ('module', 'commonjs', 'json', etc.)
  */
-function getFormatFromExtension(url) {
-  if (StringPrototypeEndsWith(url, '.mjs')) {
-    return 'module';
-  }
-  if (StringPrototypeEndsWith(url, '.cjs')) {
+function getFormatFromExtension(filePath) {
+  const ext = extname(filePath);
+  if (ext === '.js') {
+    // TODO: Check package.json "type" field for proper detection
     return 'commonjs';
   }
-  if (StringPrototypeEndsWith(url, '.json')) {
-    return 'json';
-  }
-  // Default to commonjs for .js files
-  // TODO: Check package.json "type" field for proper detection
-  return 'commonjs';
+  return extensionFormatMap[ext] ?? 'commonjs';
 }
 
 /**
@@ -387,7 +399,7 @@ function vfsResolveHook(specifier, context, nextResolve) {
   }
 
   // Check if any VFS handles this path
-  const normalized = normalizePath(checkPath);
+  const normalized = normalizeVFSPath(checkPath);
   for (let i = 0; i < activeVFSList.length; i++) {
     const vfs = activeVFSList[i];
     if (vfs.shouldHandle(normalized) && vfs.existsSync(normalized)) {
@@ -431,7 +443,7 @@ function vfsLoadHook(url, context, nextLoad) {
   }
 
   const filePath = fileURLToPath(url);
-  const normalized = normalizePath(filePath);
+  const normalized = normalizeVFSPath(filePath);
 
   // Check if any VFS handles this path
   for (let i = 0; i < activeVFSList.length; i++) {

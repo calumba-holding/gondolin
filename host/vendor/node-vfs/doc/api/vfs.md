@@ -60,7 +60,7 @@ const fs = require('node:fs');
 
 // Overlay mode: only intercept files that exist in VFS
 const myVfs = vfs.create({ overlay: true });
-myVfs.writeFileSync('/etc/config.json', '{"mocked": true}');
+myVfs.writeFileSync('/etc/config.json', JSON.stringify({ mocked: true }));
 myVfs.mount('/');
 
 // This reads from VFS (file exists in VFS)
@@ -130,6 +130,43 @@ console.log(greet('World')); // Hello, World!
 // Clean up
 myVfs.unmount();
 ```
+
+## Limitations
+
+The VFS has the following limitations:
+
+### Native addons
+
+Native addons (`.node` files) cannot be loaded from the VFS. Native addons
+must exist on the real file system because they are loaded by the operating
+system's dynamic linker, which cannot access virtual files.
+
+### Child processes
+
+Child processes spawned via `child_process.spawn()`, `child_process.exec()`,
+or similar methods cannot directly access VFS files. The child process runs
+in a separate address space and does not inherit the parent's VFS mounts.
+To share data with child processes, write files to the real file system or
+use inter-process communication.
+
+### Worker threads
+
+Each worker thread has its own independent VFS state. A VFS mounted in the
+main thread is not automatically available in worker threads. To use VFS in
+workers, create and mount a new VFS instance within each worker.
+
+### fs.watch limitations
+
+The `fs.watch()` and `fs.watchFile()` functions work with VFS files but use
+polling internally rather than native file system notifications, since VFS
+files exist only in memory.
+
+### Code caching in SEA
+
+When using VFS with Single Executable Applications, the `useCodeCache` option
+in the SEA configuration does not apply to modules loaded from the VFS. Code
+caching requires executing modules during the SEA build process, but VFS
+modules are only available at runtime.
 
 ## `vfs.create([provider][, options])`
 
@@ -203,6 +240,12 @@ added: REPLACEME
 
 Creates a new `VirtualFileSystem` instance.
 
+Multiple `VirtualFileSystem` instances can be created and used independently.
+Each instance maintains its own file tree and can be mounted at different
+paths. However, only one VFS can be mounted at a given path prefix at a time.
+If two VFS instances are mounted at overlapping paths (e.g., `/virtual` and
+`/virtual/sub`), the more specific path takes precedence for matching paths.
+
 ### `vfs.chdir(path)`
 
 <!-- YAML
@@ -264,6 +307,19 @@ myVfs.mount('/virtual');
 require('node:fs').readFileSync('/virtual/data.txt', 'utf8'); // 'Hello'
 ```
 
+On Windows, mount paths use drive letters:
+
+```cjs
+const vfs = require('node:vfs');
+
+const myVfs = vfs.create();
+myVfs.writeFileSync('/data.txt', 'Hello');
+myVfs.mount('C:\\virtual');
+
+// Now accessible as C:\virtual\data.txt
+require('node:fs').readFileSync('C:\\virtual\\data.txt', 'utf8'); // 'Hello'
+```
+
 The VFS supports the [Explicit Resource Management][] proposal. Use the `using`
 declaration to automatically unmount when leaving scope:
 
@@ -300,7 +356,7 @@ added: REPLACEME
 
 * {string | null}
 
-The current mount point, or `null` if not mounted.
+The current mount point as an absolute path, or `null` if not mounted.
 
 ### `vfs.overlay`
 
@@ -357,6 +413,9 @@ accessible through the `fs` module. The VFS can be remounted at the same or a
 different path by calling `mount()` again. Unmounting also resets the virtual
 working directory if one was set.
 
+This method is idempotent: calling `unmount()` on an already unmounted VFS
+has no effect.
+
 ### File System Methods
 
 The `VirtualFileSystem` class provides methods that mirror the `fs` module API.
@@ -368,7 +427,30 @@ including `string`, `Buffer`, `TypedArray`, and `DataView` where applicable.
 #### Overlay mode behavior
 
 When overlay mode is enabled, the following behavior applies to `fs` operations
-on mounted paths:
+on mounted paths.
+
+**Path encoding:** The VFS uses UTF-8 encoding for file and directory names
+internally. In overlay mode, path matching is performed using the VFS's UTF-8
+encoding. When falling through to the real file system, paths are passed to
+the native file system APIs which handle encoding according to platform
+conventions (UTF-8 on most Unix systems, UTF-16 on Windows). This means the
+VFS inherits the underlying file system's encoding behavior for paths that
+fall through, while VFS-internal paths always use UTF-8.
+
+**Case sensitivity:** The VFS is always case-sensitive internally. In overlay
+mode, this can cause unexpected behavior when overlaying a case-insensitive
+file system (such as macOS HFS+ or Windows NTFS):
+
+* A VFS file at `/Data.txt` will not shadow a real file at `/data.txt`
+* Looking up `/DATA.TXT` will fall through to the real file system (not found
+  in case-sensitive VFS), potentially finding a real file with different casing
+* This mismatch is intentional: the VFS maintains consistent cross-platform
+  behavior rather than emulating the underlying file system's case handling
+
+If case-insensitive matching is required, applications should normalize paths
+before VFS operations.
+
+**Operation routing:**
 
 * **Read operations** (`readFile`, `readdir`, `stat`, `lstat`, `access`,
   `exists`, `realpath`, `readlink`): Check VFS first. If the path doesn't exist
@@ -746,7 +828,7 @@ const vfs = require('node:vfs');
 
 const myVfs = vfs.create();
 myVfs.mkdirSync('/data');
-myVfs.writeFileSync('/data/config.json', '{}');
+myVfs.writeFileSync('/data/config.json', JSON.stringify({}));
 
 // This works - symlink within VFS
 myVfs.symlinkSync('/data/config.json', '/config');
@@ -775,7 +857,7 @@ const fs = require('node:fs');
 
 const myVfs = vfs.create({ overlay: true });
 myVfs.mkdirSync('/data');
-myVfs.writeFileSync('/data/config.json', '{"source": "vfs"}');
+myVfs.writeFileSync('/data/config.json', JSON.stringify({ source: 'vfs' }));
 myVfs.symlinkSync('/data/config.json', '/data/link');
 myVfs.mount('/app');
 
@@ -881,6 +963,32 @@ This is particularly dangerous because:
 * It's harder to detect than full path shadowing
 * Only specific targeted files are affected
 * Other operations appear to work normally
+
+### Monitoring VFS mounts
+
+To help detect unauthorized VFS usage, the `process` object emits events when
+a VFS is mounted or unmounted:
+
+```cjs
+process.on('vfs-mount', (info) => {
+  console.log(`VFS mounted at ${info.mountPoint}`);
+  console.log(`  overlay: ${info.overlay}`);
+  console.log(`  readonly: ${info.readonly}`);
+});
+
+process.on('vfs-unmount', (info) => {
+  console.log(`VFS unmounted from ${info.mountPoint}`);
+});
+```
+
+The event object contains:
+
+* `mountPoint` {string} The path where the VFS is mounted.
+* `overlay` {boolean} Whether overlay mode is enabled.
+* `readonly` {boolean} Whether the VFS is read-only.
+
+Applications can use these events to log VFS activity, alert on suspicious
+mounts (such as mounting over system paths), or enforce security policies.
 
 ### Recommendations
 

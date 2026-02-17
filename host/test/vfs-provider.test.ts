@@ -51,7 +51,15 @@ test("SandboxVfsProvider link delegates and emits hooks", async () => {
 });
 
 test("SandboxVfsProvider link returns ENOSYS without backend support", async () => {
-  const vfs = new SandboxVfsProvider(new MemoryProvider());
+  const backend = new Proxy(new MemoryProvider() as any, {
+    get(target, prop, receiver) {
+      if (prop === "link" || prop === "linkSync") {
+        return undefined;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  const vfs = new SandboxVfsProvider(backend);
 
   await assert.rejects(
     () => vfs.link("/a", "/b"),

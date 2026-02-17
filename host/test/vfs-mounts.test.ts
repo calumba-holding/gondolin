@@ -112,8 +112,16 @@ test("MountRouterProvider link rejects cross-mount paths", async () => {
 });
 
 test("MountRouterProvider link delegates or reports ENOSYS", async () => {
+  const unsupportedProvider = new Proxy(new MemoryProvider() as any, {
+    get(target, prop, receiver) {
+      if (prop === "link" || prop === "linkSync") {
+        return undefined;
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
   const unsupportedRouter = new MountRouterProvider({
-    "/data": new MemoryProvider(),
+    "/data": unsupportedProvider,
   });
   await assert.rejects(
     () => unsupportedRouter.link("/data/a", "/data/b"),

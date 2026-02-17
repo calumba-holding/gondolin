@@ -1,40 +1,12 @@
 'use strict';
 
 const {
-  StringPrototypeEndsWith,
-  StringPrototypeLastIndexOf,
-  StringPrototypeReplaceAll,
   StringPrototypeSlice,
   StringPrototypeSplit,
   StringPrototypeStartsWith,
 } = primordials;
 
-const { basename, isAbsolute, resolve, sep } = require('path');
-
-/**
- * Normalizes a path for VFS lookup.
- * - Resolves to absolute path
- * - Removes trailing slashes (except for root)
- * - Normalizes separators to forward slashes (VFS uses '/' internally)
- * @param {string} inputPath The path to normalize
- * @returns {string} The normalized path
- */
-function normalizePath(inputPath) {
-  let normalized = resolve(inputPath);
-
-  // On Windows, convert backslashes to forward slashes for consistent VFS lookup.
-  // VFS uses forward slashes internally regardless of platform.
-  if (sep === '\\') {
-    normalized = StringPrototypeReplaceAll(normalized, '\\', '/');
-  }
-
-  // Remove trailing slash (except for root)
-  if (normalized.length > 1 && StringPrototypeEndsWith(normalized, '/')) {
-    normalized = StringPrototypeSlice(normalized, 0, -1);
-  }
-
-  return normalized;
-}
+const { isAbsolute, posix: pathPosix } = require('path');
 
 /**
  * Splits a path into segments.
@@ -60,11 +32,7 @@ function getParentPath(normalizedPath) {
   if (normalizedPath === '/') {
     return null;
   }
-  const lastSlash = StringPrototypeLastIndexOf(normalizedPath, '/');
-  if (lastSlash === 0) {
-    return '/';
-  }
-  return StringPrototypeSlice(normalizedPath, 0, lastSlash);
+  return pathPosix.dirname(normalizedPath);
 }
 
 /**
@@ -73,8 +41,7 @@ function getParentPath(normalizedPath) {
  * @returns {string} The base name
  */
 function getBaseName(normalizedPath) {
-  // Basename works correctly for VFS paths since they use forward slashes
-  return basename(normalizedPath);
+  return pathPosix.basename(normalizedPath);
 }
 
 /**
@@ -116,32 +83,11 @@ function getRelativePath(normalizedPath, mountPoint) {
   return StringPrototypeSlice(normalizedPath, mountPoint.length);
 }
 
-/**
- * Joins a mount point with a relative path.
- * Note: We don't use path.join here because VFS relative paths start with /
- * and path.join would treat them as absolute paths.
- * @param {string} mountPoint A normalized mount point path
- * @param {string} relativePath A relative path (starting with /)
- * @returns {string} The joined absolute path
- */
-function joinMountPath(mountPoint, relativePath) {
-  if (relativePath === '/') {
-    return mountPoint;
-  }
-  // Special case: root mount point - the relative path is already the full path
-  if (mountPoint === '/') {
-    return relativePath;
-  }
-  return mountPoint + relativePath;
-}
-
 module.exports = {
-  normalizePath,
   splitPath,
   getParentPath,
   getBaseName,
   isUnderMountPoint,
   getRelativePath,
-  joinMountPath,
   isAbsolutePath: isAbsolute,
 };
