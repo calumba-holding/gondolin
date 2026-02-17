@@ -193,24 +193,17 @@ class RealFSProvider extends VirtualProvider {
     return true;
   }
 
-  /**
-   * Resolves a VFS path to a real filesystem path.
-   * Ensures the path doesn't escape the root directory.
-   * @param {string} vfsPath The VFS path (relative to provider root)
-   * @returns {string} The real filesystem path
-   * @private
-   */
-  _resolvePath(vfsPath) {
-    // Normalize the VFS path (remove leading slash, handle . and ..)
+  // _resolvePathLexical: lexical containment only
+  // _resolvePathFollow: lexical + realpath verification
+  // _resolvePathNoFollowFinal: validates ancestors via follow checks, but treats final path segment lexically
+  _resolvePathLexical(vfsPath) {
     let normalized = vfsPath;
     if (normalized.startsWith('/')) {
       normalized = normalized.slice(1);
     }
 
-    // Join with root and resolve
     const realPath = path.resolve(this.#rootPath, normalized);
 
-    // Security check: ensure the resolved path is within rootPath
     const rootWithSep = this.#rootPath.endsWith(path.sep) ?
       this.#rootPath :
       this.#rootPath + path.sep;
@@ -223,14 +216,93 @@ class RealFSProvider extends VirtualProvider {
     return realPath;
   }
 
+  _isInsideRoot(resolvedPath) {
+    if (resolvedPath === this.#rootPath) return true;
+    const rootWithSep = this.#rootPath.endsWith(path.sep) ?
+      this.#rootPath :
+      this.#rootPath + path.sep;
+    return StringPrototypeStartsWith(resolvedPath, rootWithSep);
+  }
+
+  _assertAncestorWithinRoot(realPath, vfsPath) {
+    let current = realPath;
+    while (true) {
+      const parent = path.dirname(current);
+      if (parent === current) break; // reached filesystem root
+
+      let resolvedParent = null;
+      try {
+        resolvedParent = fs.realpathSync(parent);
+      } catch (e) {
+        if (e && e.code === 'ENOENT') {
+          current = parent;
+          continue;
+        }
+        throw e;
+      }
+
+      if (!this._isInsideRoot(resolvedParent)) {
+        const { createENOENT } = require('internal/vfs/errors');
+        throw createENOENT('open', vfsPath);
+      }
+      return; // found a safe existing ancestor
+    }
+  }
+
+  _resolvePathFollow(vfsPath) {
+    const realPath = this._resolvePathLexical(vfsPath);
+    const { createENOENT } = require('internal/vfs/errors');
+
+    try {
+      const resolved = fs.realpathSync(realPath);
+      if (!this._isInsideRoot(resolved)) {
+        throw createENOENT('open', vfsPath);
+      }
+      return realPath;
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+
+    // Strict mode: if the final entry is a dangling symlink, reject it.
+    let lst = null;
+    try {
+      lst = fs.lstatSync(realPath);
+    } catch (error) {
+      if (!error || error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+    if (lst && lst.isSymbolicLink()) {
+      throw createENOENT('open', vfsPath);
+    }
+
+    this._assertAncestorWithinRoot(realPath, vfsPath);
+
+    return realPath;
+  }
+
+  _resolvePathNoFollowFinal(vfsPath) {
+    const realPath = this._resolvePathLexical(vfsPath);
+    let normalized = vfsPath;
+    if (!normalized.startsWith('/')) {
+      normalized = '/' + normalized;
+    }
+    normalized = path.posix.normalize(normalized);
+    const parentVfsPath = path.posix.dirname(normalized);
+    this._resolvePathFollow(parentVfsPath);
+    return realPath;
+  }
+
   openSync(vfsPath, flags, mode) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     const fd = fs.openSync(realPath, flags, mode);
     return new RealFileHandle(vfsPath, flags, mode ?? 0o644, fd, realPath);
   }
 
   async open(vfsPath, flags, mode) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return new Promise((resolve, reject) => {
       fs.open(realPath, flags, mode, (err, fd) => {
         if (err) reject(err);
@@ -240,111 +312,111 @@ class RealFSProvider extends VirtualProvider {
   }
 
   statSync(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.statSync(realPath, options);
   }
 
   async stat(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.promises.stat(realPath, options);
   }
 
   lstatSync(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathLexical(vfsPath);
     return fs.lstatSync(realPath, options);
   }
 
   async lstat(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathLexical(vfsPath);
     return fs.promises.lstat(realPath, options);
   }
 
   readdirSync(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.readdirSync(realPath, options);
   }
 
   async readdir(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.promises.readdir(realPath, options);
   }
 
   mkdirSync(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.mkdirSync(realPath, options);
   }
 
   async mkdir(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.promises.mkdir(realPath, options);
   }
 
   rmdirSync(vfsPath) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathNoFollowFinal(vfsPath);
     fs.rmdirSync(realPath);
   }
 
   async rmdir(vfsPath) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathNoFollowFinal(vfsPath);
     return fs.promises.rmdir(realPath);
   }
 
   unlinkSync(vfsPath) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathNoFollowFinal(vfsPath);
     fs.unlinkSync(realPath);
   }
 
   async unlink(vfsPath) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathNoFollowFinal(vfsPath);
     return fs.promises.unlink(realPath);
   }
 
   renameSync(oldVfsPath, newVfsPath) {
-    const oldRealPath = this._resolvePath(oldVfsPath);
-    const newRealPath = this._resolvePath(newVfsPath);
+    const oldRealPath = this._resolvePathNoFollowFinal(oldVfsPath);
+    const newRealPath = this._resolvePathNoFollowFinal(newVfsPath);
     fs.renameSync(oldRealPath, newRealPath);
   }
 
   async rename(oldVfsPath, newVfsPath) {
-    const oldRealPath = this._resolvePath(oldVfsPath);
-    const newRealPath = this._resolvePath(newVfsPath);
+    const oldRealPath = this._resolvePathNoFollowFinal(oldVfsPath);
+    const newRealPath = this._resolvePathNoFollowFinal(newVfsPath);
     return fs.promises.rename(oldRealPath, newRealPath);
   }
 
   linkSync(existingVfsPath, newVfsPath) {
-    const existingRealPath = this._resolvePath(existingVfsPath);
-    const newRealPath = this._resolvePath(newVfsPath);
+    const existingRealPath = this._resolvePathFollow(existingVfsPath);
+    const newRealPath = this._resolvePathNoFollowFinal(newVfsPath);
     fs.linkSync(existingRealPath, newRealPath);
   }
 
   async link(existingVfsPath, newVfsPath) {
-    const existingRealPath = this._resolvePath(existingVfsPath);
-    const newRealPath = this._resolvePath(newVfsPath);
+    const existingRealPath = this._resolvePathFollow(existingVfsPath);
+    const newRealPath = this._resolvePathNoFollowFinal(newVfsPath);
     return fs.promises.link(existingRealPath, newRealPath);
   }
 
   readlinkSync(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathLexical(vfsPath);
     return fs.readlinkSync(realPath, options);
   }
 
   async readlink(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathLexical(vfsPath);
     return fs.promises.readlink(realPath, options);
   }
 
   symlinkSync(target, vfsPath, type) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     fs.symlinkSync(target, realPath, type);
   }
 
   async symlink(target, vfsPath, type) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.promises.symlink(target, realPath, type);
   }
 
   realpathSync(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     const resolved = fs.realpathSync(realPath, options);
     // Convert back to VFS path
     if (resolved === this.#rootPath) {
@@ -359,7 +431,7 @@ class RealFSProvider extends VirtualProvider {
   }
 
   async realpath(vfsPath, options) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     const resolved = await fs.promises.realpath(realPath, options);
     // Convert back to VFS path
     if (resolved === this.#rootPath) {
@@ -373,24 +445,24 @@ class RealFSProvider extends VirtualProvider {
   }
 
   accessSync(vfsPath, mode) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     fs.accessSync(realPath, mode);
   }
 
   async access(vfsPath, mode) {
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     return fs.promises.access(realPath, mode);
   }
 
   copyFileSync(srcVfsPath, destVfsPath, mode) {
-    const srcRealPath = this._resolvePath(srcVfsPath);
-    const destRealPath = this._resolvePath(destVfsPath);
+    const srcRealPath = this._resolvePathFollow(srcVfsPath);
+    const destRealPath = this._resolvePathFollow(destVfsPath);
     fs.copyFileSync(srcRealPath, destRealPath, mode);
   }
 
   async copyFile(srcVfsPath, destVfsPath, mode) {
-    const srcRealPath = this._resolvePath(srcVfsPath);
-    const destRealPath = this._resolvePath(destVfsPath);
+    const srcRealPath = this._resolvePathFollow(srcVfsPath);
+    const destRealPath = this._resolvePathFollow(destVfsPath);
     return fs.promises.copyFile(srcRealPath, destRealPath, mode);
   }
 
@@ -402,7 +474,7 @@ class RealFSProvider extends VirtualProvider {
       throw err;
     }
 
-    const realPath = this._resolvePath(vfsPath);
+    const realPath = this._resolvePathFollow(vfsPath);
     const stats = await fs.promises.statfs(realPath);
     const bsize = Number(stats.bsize ?? 4096);
 

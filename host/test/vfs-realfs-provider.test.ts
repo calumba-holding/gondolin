@@ -124,6 +124,311 @@ test("RealFSProvider symlink, readlink, lstat, realpath", (t) => {
   assert.equal(resolved, "/target.txt");
 });
 
+test("RealFSProvider blocks read via pre-existing escaping symlink", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  const outsideFile = path.join(outsideDir, "secret.txt");
+  fs.writeFileSync(outsideFile, "secret-data");
+  fs.symlinkSync(outsideFile, path.join(root, "escape-link"));
+
+  assert.throws(() => provider.openSync("/escape-link", "r"), isENOENT);
+  assert.throws(() => provider.statSync("/escape-link"), isENOENT);
+  await assert.rejects(() => provider.open("/escape-link", "r"), isENOENT);
+  await assert.rejects(() => provider.stat("/escape-link"), isENOENT);
+});
+
+test("RealFSProvider blocks create under symlinked parent escaping root", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-parent-");
+  fs.symlinkSync(outsideDir, path.join(root, "parent-escape"));
+
+  assert.throws(
+    () => provider.openSync("/parent-escape/file.txt", "w"),
+    isENOENT,
+  );
+  await assert.rejects(
+    () => provider.open("/parent-escape/file.txt", "w"),
+    isENOENT,
+  );
+  assert.throws(() => provider.readdirSync("/parent-escape"), isENOENT);
+  assert.equal(fs.readdirSync(outsideDir).length, 0);
+});
+
+test("RealFSProvider allows lstat/readlink/unlink on escaping symlink inside root", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  const outsideFile = path.join(outsideDir, "target.txt");
+  fs.writeFileSync(outsideFile, "data");
+  fs.symlinkSync(outsideFile, path.join(root, "escape-link"));
+
+  const lst = provider.lstatSync("/escape-link");
+  assert.equal(lst.isSymbolicLink(), true);
+
+  const target = provider.readlinkSync("/escape-link");
+  assert.equal(target, outsideFile);
+
+  provider.unlinkSync("/escape-link");
+  assert.throws(() => fs.lstatSync(path.join(root, "escape-link")), {
+    code: "ENOENT",
+  });
+  assert.equal(fs.readFileSync(outsideFile, "utf8"), "data");
+});
+
+test("RealFSProvider blocks unlink through escaping intermediate symlink", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  const outsideFile = path.join(outsideDir, "victim.txt");
+  fs.writeFileSync(outsideFile, "data");
+  fs.symlinkSync(outsideDir, path.join(root, "evil"));
+
+  assert.throws(() => provider.unlinkSync("/evil/victim.txt"), isENOENT);
+  await assert.rejects(() => provider.unlink("/evil/victim.txt"), isENOENT);
+  assert.equal(fs.existsSync(outsideFile), true);
+});
+
+test("RealFSProvider allows in-root relative symlink", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  fs.mkdirSync(path.join(root, "a"));
+  fs.mkdirSync(path.join(root, "b"));
+  fs.writeFileSync(path.join(root, "b", "file.txt"), "in-root-data");
+  fs.symlinkSync("../b/file.txt", path.join(root, "a", "link"));
+
+  const fh = provider.openSync("/a/link", "r");
+  const contents = fh.readFileSync({ encoding: "utf8" });
+  fh.closeSync();
+  assert.equal(contents, "in-root-data");
+
+  const st = provider.statSync("/a/link");
+  assert.equal(st.isFile(), true);
+});
+
+test("RealFSProvider allows in-root absolute symlink", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const resolvedRoot = fs.realpathSync(root);
+  const provider = new RealFSProvider(root);
+  fs.writeFileSync(path.join(resolvedRoot, "real-file.txt"), "absolute-ok");
+  fs.symlinkSync(
+    path.join(resolvedRoot, "real-file.txt"),
+    path.join(resolvedRoot, "abs-link"),
+  );
+
+  const fh = provider.openSync("/abs-link", "r");
+  const contents = fh.readFileSync({ encoding: "utf8" });
+  fh.closeSync();
+  assert.equal(contents, "absolute-ok");
+
+  const st = provider.statSync("/abs-link");
+  assert.equal(st.isFile(), true);
+});
+
+test("RealFSProvider blocks dangling escaping symlink on write", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideTarget = path.join(
+    os.tmpdir(),
+    "gondolin-dangling-" + Date.now(),
+  );
+  t.after(() => {
+    fs.rmSync(outsideTarget, { force: true });
+  });
+  fs.symlinkSync(outsideTarget, path.join(root, "dangling-escape"));
+
+  assert.throws(() => provider.openSync("/dangling-escape", "w"), isENOENT);
+  assert.equal(fs.existsSync(outsideTarget), false);
+});
+
+test("RealFSProvider blocks write via dangling symlink inside root", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  fs.symlinkSync("target.txt", path.join(root, "safe-dangling"));
+
+  assert.throws(() => provider.openSync("/safe-dangling", "w"), isENOENT);
+  assert.equal(fs.existsSync(path.join(root, "target.txt")), false);
+});
+
+test("RealFSProvider blocks hard-link to escaping symlink target", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  const outsideFile = path.join(outsideDir, "secret.txt");
+  fs.writeFileSync(outsideFile, "secret");
+  fs.symlinkSync(outsideFile, path.join(root, "escape-link"));
+
+  assert.throws(() => provider.linkSync("/escape-link", "/copy"), isENOENT);
+});
+
+test("RealFSProvider blocks hard-link destination through escaping intermediate symlink", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  fs.writeFileSync(path.join(root, "source.txt"), "source");
+  fs.symlinkSync(outsideDir, path.join(root, "evil"));
+
+  assert.throws(
+    () => provider.linkSync("/source.txt", "/evil/linked.txt"),
+    isENOENT,
+  );
+  await assert.rejects(
+    () => provider.link("/source.txt", "/evil/linked.txt"),
+    isENOENT,
+  );
+  assert.equal(fs.readdirSync(outsideDir).length, 0);
+});
+
+test("RealFSProvider blocks chained dangling symlink escape", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideTarget = path.join(os.tmpdir(), "gondolin-chain-" + Date.now());
+  t.after(() => {
+    fs.rmSync(outsideTarget, { force: true });
+  });
+
+  fs.symlinkSync(outsideTarget, path.join(root, "level1"));
+  fs.symlinkSync("level1", path.join(root, "level2"));
+
+  assert.throws(() => provider.openSync("/level2", "w"), isENOENT);
+  assert.equal(fs.existsSync(outsideTarget), false);
+});
+
+test("RealFSProvider blocks mkdir through escaping intermediate symlink", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  fs.symlinkSync(outsideDir, path.join(root, "evil"));
+
+  assert.throws(() => provider.mkdirSync("/evil/subdir"), isENOENT);
+  assert.equal(fs.readdirSync(outsideDir).length, 0);
+});
+
+test("RealFSProvider blocks rename through escaping intermediate symlink", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  const outsideDir = makeTempDir(t, "gondolin-outside-");
+  fs.symlinkSync(outsideDir, path.join(root, "evil"));
+  fs.writeFileSync(path.join(root, "file.txt"), "data");
+
+  assert.throws(
+    () => provider.renameSync("/file.txt", "/evil/file.txt"),
+    isENOENT,
+  );
+  assert.equal(fs.readdirSync(outsideDir).length, 0);
+  assert.ok(fs.existsSync(path.join(root, "file.txt")));
+});
+
+test("RealFSProvider rmdir does not follow final symlink", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+  fs.mkdirSync(path.join(root, "real-dir"));
+  fs.symlinkSync("real-dir", path.join(root, "dir-link"));
+
+  assert.throws(() => provider.rmdirSync("/dir-link"), {
+    code: "ENOTDIR",
+  });
+  assert.equal(fs.existsSync(path.join(root, "real-dir")), true);
+  assert.equal(
+    fs.lstatSync(path.join(root, "dir-link")).isSymbolicLink(),
+    true,
+  );
+});
+
+test("RealFSProvider rename does not follow final symlink components", (t) => {
+  if (process.platform === "win32") {
+    t.skip("symlink semantics require elevated permissions on Windows");
+  }
+
+  const root = makeTempDir(t);
+  const provider = new RealFSProvider(root);
+
+  fs.writeFileSync(path.join(root, "target.txt"), "target");
+  fs.symlinkSync("target.txt", path.join(root, "src-link"));
+  provider.renameSync("/src-link", "/renamed-link");
+
+  assert.equal(
+    fs.lstatSync(path.join(root, "renamed-link")).isSymbolicLink(),
+    true,
+  );
+  assert.equal(fs.readlinkSync(path.join(root, "renamed-link")), "target.txt");
+  assert.equal(
+    fs.readFileSync(path.join(root, "target.txt"), "utf8"),
+    "target",
+  );
+
+  fs.writeFileSync(path.join(root, "source.txt"), "new");
+  fs.writeFileSync(path.join(root, "dest-target.txt"), "old");
+  fs.symlinkSync("dest-target.txt", path.join(root, "dest-link"));
+
+  provider.renameSync("/source.txt", "/dest-link");
+
+  assert.equal(fs.lstatSync(path.join(root, "dest-link")).isFile(), true);
+  assert.equal(fs.readFileSync(path.join(root, "dest-link"), "utf8"), "new");
+  assert.equal(
+    fs.readFileSync(path.join(root, "dest-target.txt"), "utf8"),
+    "old",
+  );
+});
+
 test("RealFSProvider statfs reports host filesystem stats", async (t) => {
   const root = makeTempDir(t);
   const provider = new RealFSProvider(root);
