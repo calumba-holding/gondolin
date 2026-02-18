@@ -2,7 +2,7 @@
 
 All notable changes to Gondolin are documented here.
 
-## Unreleased
+## 0.4.0
 
 - Add bash fallback to `/bin/sh` for `gondolin bash` and `gondolin attach` when bash is unavailable
 - Add VM registry and `gondolin attach`/`gondolin list` CLI commands to manage and connect to running VMs
