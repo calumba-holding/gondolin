@@ -157,14 +157,14 @@ test("vm internals: file helpers short-circuit VFS mounts", async () => {
       throw new Error("start should not be called for VFS shortcut");
     };
 
-    await vm.writeFile("/workspace/hello.txt", "hello world");
+    await vm.fs.writeFile("/workspace/hello.txt", "hello world");
 
-    const text = await vm.readFile("/workspace/hello.txt", {
+    const text = await vm.fs.readFile("/workspace/hello.txt", {
       encoding: "utf-8",
     });
     assert.equal(text, "hello world");
 
-    const stream = await vm.readFileStream("/workspace/hello.txt");
+    const stream = await vm.fs.readFileStream("/workspace/hello.txt");
     assert.equal(stream.readableObjectMode, false);
     const chunks: Buffer[] = [];
     for await (const chunk of stream) {
@@ -172,13 +172,34 @@ test("vm internals: file helpers short-circuit VFS mounts", async () => {
     }
     assert.equal(Buffer.concat(chunks).toString("utf-8"), "hello world");
 
-    await vm.writeFile("/data/workspace/from-fuse.txt", "fuse-path");
-    const fromFuse = await vm.readFile("/workspace/from-fuse.txt", {
+    await vm.fs.writeFile("/data/workspace/from-fuse.txt", "fuse-path");
+    const fromFuse = await vm.fs.readFile("/workspace/from-fuse.txt", {
       encoding: "utf-8",
     });
     assert.equal(fromFuse, "fuse-path");
 
-    await vm.deleteFile("/workspace/hello.txt");
+    await vm.fs.access("/workspace/from-fuse.txt");
+    const fileStats = await vm.fs.stat("/workspace/from-fuse.txt");
+    assert.equal(fileStats.isFile(), true);
+
+    await vm.fs.mkdir("/workspace/nested/dir", { recursive: true });
+    await vm.fs.access("/workspace/nested/dir");
+
+    await vm.fs.rename(
+      "/workspace/from-fuse.txt",
+      "/workspace/from-fuse-renamed.txt",
+    );
+    const renamed = await vm.fs.readFile("/workspace/from-fuse-renamed.txt", {
+      encoding: "utf-8",
+    });
+    assert.equal(renamed, "fuse-path");
+
+    const workspaceEntries = await vm.fs.listDir("/workspace");
+    assert.ok(workspaceEntries.includes("from-fuse-renamed.txt"));
+    assert.ok(!workspaceEntries.includes("from-fuse.txt"));
+    assert.ok(workspaceEntries.includes("nested"));
+
+    await vm.fs.deleteFile("/workspace/hello.txt");
     await assert.rejects(
       () => provider.stat("/hello.txt"),
       (err: unknown) => {
@@ -194,10 +215,10 @@ test("vm internals: file helpers short-circuit VFS mounts", async () => {
 
     await provider.mkdir("/dir");
     await assert.rejects(
-      () => vm.deleteFile("/workspace/dir"),
+      () => vm.fs.deleteFile("/workspace/dir"),
       /failed to delete guest file/,
     );
-    await vm.deleteFile("/workspace/dir", { recursive: true });
+    await vm.fs.deleteFile("/workspace/dir", { recursive: true });
   } finally {
     cleanup();
   }
@@ -219,7 +240,18 @@ test("vm internals: file helpers still use VM path for non-VFS files", async () 
       throw new Error("start called");
     };
 
-    await assert.rejects(() => vm.readFile("/tmp/not-vfs"), /start called/);
+    await assert.rejects(() => vm.fs.readFile("/tmp/not-vfs"), /start called/);
+    await assert.rejects(() => vm.fs.access("/tmp/not-vfs"), /start called/);
+    await assert.rejects(
+      () => vm.fs.mkdir("/tmp/not-vfs", { recursive: true }),
+      /start called/,
+    );
+    await assert.rejects(() => vm.fs.listDir("/tmp/not-vfs"), /start called/);
+    await assert.rejects(() => vm.fs.stat("/tmp/not-vfs"), /start called/);
+    await assert.rejects(
+      () => vm.fs.rename("/tmp/a", "/tmp/b"),
+      /start called/,
+    );
   } finally {
     cleanup();
   }

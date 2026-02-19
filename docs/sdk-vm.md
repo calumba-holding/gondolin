@@ -212,44 +212,67 @@ that the guest process is terminated.
 `vm.shell()` is a convenience wrapper around `vm.exec()` for interactive
 sessions (PTY + stdin enabled), optionally attaching to the current terminal.
 
-## `vm.readFile()`, `vm.readFileStream()`, `vm.writeFile()`, and `vm.deleteFile()`
+## `vm.fs`
 
-These helpers provide host-driven file operations inside the guest. They allow
-filesystem access even for non-VFS mounts that are handled on the host side
-directly.
+Filesystem operations are exposed under `vm.fs`. This includes both the
+existing file helpers and additional operations like `access()`, `mkdir()`,
+`listDir()`, `stat()`, and `rename()`.
 
 ```ts
+import { constants } from "node:fs";
 import { Readable } from "node:stream";
 
+// Check access
+await vm.fs.access("/etc/os-release", { mode: constants.R_OK });
+
+// Create directories
+await vm.fs.mkdir("/tmp/workspace/nested", { recursive: true });
+
+// List direct children
+const entries = await vm.fs.listDir("/tmp/workspace");
+console.log(entries);
+
+// Stat (same object shape as node:fs Stats / VFS Stats)
+const st = await vm.fs.stat("/tmp/workspace");
+console.log(st.isDirectory(), st.mode, st.size);
+
+// Rename / move
+await vm.fs.rename("/tmp/old-name.txt", "/tmp/new-name.txt");
+
 // Read text
-const osRelease = await vm.readFile("/etc/os-release", { encoding: "utf-8" });
+const osRelease = await vm.fs.readFile("/etc/os-release", {
+  encoding: "utf-8",
+});
 
 // Stream-read a large file
-const stream = await vm.readFileStream("/var/log/messages");
+const stream = await vm.fs.readFileStream("/var/log/messages");
 for await (const chunk of stream) {
   process.stdout.write(chunk);
 }
 
 // Write text (overwrites existing file)
-await vm.writeFile("/tmp/hello.txt", "hello from host\n");
+await vm.fs.writeFile("/tmp/hello.txt", "hello from host\n");
 
 // Stream-write from a Node readable
-await vm.writeFile("/tmp/payload.bin", Readable.from([
-  Buffer.from([0xde, 0xad]),
-  Buffer.from([0xbe, 0xef]),
-]));
+await vm.fs.writeFile(
+  "/tmp/payload.bin",
+  Readable.from([Buffer.from([0xde, 0xad]), Buffer.from([0xbe, 0xef])]),
+);
 
 // Delete file
-await vm.deleteFile("/tmp/hello.txt");
+await vm.fs.deleteFile("/tmp/hello.txt");
 
 // Delete recursively / ignore missing path
-await vm.deleteFile("/tmp/some-dir", { recursive: true, force: true });
+await vm.fs.deleteFile("/tmp/some-dir", { recursive: true, force: true });
 ```
 
 Notes:
 
-- `readFile()` reads any path visible in the **running guest filesystem** (including rootfs paths under `/`)
-- `readFile()` returns a `Buffer` by default; pass `encoding` to get a `string`
-- `readFileStream()` streams file bytes as a Node readable stream
-- `writeFile()` truncates existing files before writing and accepts `string`, `Buffer`, `Uint8Array`, `Readable`, or `AsyncIterable`
-- `deleteFile()` supports `force` and `recursive`
+- `vm.fs.listDir()` returns direct child names for a directory
+- `vm.fs.stat()` returns a Node-compatible `fs.Stats` object (same shape used by VFS providers)
+- `vm.fs.rename()` renames/moves a path
+- `vm.fs.readFile()` reads any path visible in the **running guest filesystem** (including rootfs paths under `/`)
+- `vm.fs.readFile()` returns a `Buffer` by default; pass `encoding` to get a `string`
+- `vm.fs.readFileStream()` streams file bytes as a Node readable stream
+- `vm.fs.writeFile()` truncates existing files before writing and accepts `string`, `Buffer`, `Uint8Array`, `Readable`, or `AsyncIterable`
+- `vm.fs.deleteFile()` supports `force` and `recursive`

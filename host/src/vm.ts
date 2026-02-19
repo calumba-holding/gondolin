@@ -6,7 +6,6 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import { Duplex, Readable } from "stream";
 
-import { toBufferIterable } from "./buffer-iter";
 import { AsyncSingleflight } from "./async-utils";
 
 import {
@@ -66,7 +65,6 @@ import {
   createGondolinEtcMount,
 } from "./ingress";
 import { MemoryProvider, type VirtualProvider } from "./vfs/node";
-import { normalizeVfsPath } from "./vfs/utils";
 import {
   SandboxVfsProvider,
   type VfsHooks,
@@ -75,13 +73,11 @@ import {
 } from "./vfs/provider";
 import {
   MountRouterProvider,
-  getRelativePath,
-  isNoEntryError,
-  isUnderMountPoint,
   listMountPaths,
   normalizeMountMap,
   normalizeMountPath,
 } from "./vfs/mounts";
+import { VmFsController, type VmFs } from "./vm-fs";
 import {
   ExecProcess,
   ExecResult,
@@ -98,7 +94,6 @@ import {
 
 const MAX_REQUEST_ID = 0xffffffff;
 const DEFAULT_STDIN_CHUNK = 32 * 1024;
-const DEFAULT_VFS_FILE_CHUNK_SIZE = 64 * 1024;
 const DEFAULT_VFS_READY_TIMEOUT_MS = 30000;
 const VFS_READY_SLEEP_SECONDS = resolveEnvNumber(
   "GONDOLIN_VFS_READY_SLEEP_SECONDS",
@@ -118,6 +113,23 @@ type ExecInput = string | string[];
 type EnvInput = string[] | Record<string, string>;
 
 type ExecStdin = boolean | string | Buffer | Readable | AsyncIterable<Buffer>;
+
+export type {
+  VmFs,
+  VmFsAccessOptions,
+  VmFsMkdirOptions,
+  VmFsListDirOptions,
+  VmFsStatOptions,
+  VmFsRenameOptions,
+  VmFsStat,
+  VmFsReadFileOptions,
+  VmFsReadFileBufferOptions,
+  VmFsReadFileTextOptions,
+  VmFsReadFileStreamOptions,
+  VmFsWriteFileInput,
+  VmFsWriteFileOptions,
+  VmFsDeleteOptions,
+} from "./vm-fs";
 
 export type VmVfsOptions = {
   /** mount map (guest path -> provider) */
@@ -208,68 +220,6 @@ export type SshAccess = {
   close(): Promise<void>;
 };
 
-export type VmReadFileBufferOptions = {
-  /** decoded output disabled (returns Buffer) */
-  encoding?: null;
-  /** working directory for relative paths */
-  cwd?: string;
-  /** preferred chunk size in `bytes` */
-  chunkSize?: number;
-  /** abort signal for the read command */
-  signal?: AbortSignal;
-};
-
-export type VmReadFileTextOptions = {
-  /** text encoding for returned data */
-  encoding: BufferEncoding;
-  /** working directory for relative paths */
-  cwd?: string;
-  /** preferred chunk size in `bytes` */
-  chunkSize?: number;
-  /** abort signal for the read command */
-  signal?: AbortSignal;
-};
-
-export type VmReadFileStreamOptions = {
-  /** working directory for relative paths */
-  cwd?: string;
-  /** preferred chunk size in `bytes` */
-  chunkSize?: number;
-  /** stream highWaterMark in `bytes` */
-  highWaterMark?: number;
-  /** abort signal for the read request */
-  signal?: AbortSignal;
-};
-
-export type VmReadFileOptions = VmReadFileBufferOptions | VmReadFileTextOptions;
-
-export type VmWriteFileInput =
-  | string
-  | Buffer
-  | Uint8Array
-  | Readable
-  | AsyncIterable<Buffer | Uint8Array>;
-
-export type VmWriteFileOptions = {
-  /** string encoding for top-level text input */
-  encoding?: BufferEncoding;
-  /** working directory for relative paths */
-  cwd?: string;
-  /** abort signal for the write command */
-  signal?: AbortSignal;
-};
-
-export type VmDeleteFileOptions = {
-  /** ignore missing path errors */
-  force?: boolean;
-  /** allow recursive directory deletion */
-  recursive?: boolean;
-  /** working directory for relative paths */
-  cwd?: string;
-  /** abort signal for the delete command */
-  signal?: AbortSignal;
-};
-
 export type VMState = SandboxState | "unknown";
 
 type RootDiskState = {
@@ -294,6 +244,8 @@ export class VM {
   }
   /** vm session identifier */
   readonly id: string;
+  /** guest filesystem operations */
+  readonly fs: VmFs;
   private readonly autoStart: boolean;
   private readonly sessionLabel: string | undefined;
   private server: SandboxServer | null;
@@ -581,6 +533,14 @@ export class VM {
 
     this.resolvedSandboxOptions = resolved;
     this.server = new SandboxServer(resolved);
+    this.fs = new VmFsController({
+      start: () => this.start(),
+      exec: (command, fsOptions = {}) => this.exec(command, fsOptions),
+      getServer: () => this.server,
+      vfs: this.vfs,
+      fuseMount: this.fuseMount,
+      shortcutBindMounts: this.shortcutBindMounts,
+    });
 
     const effectiveDebugFlags = resolvedSandboxOptions
       ? new Set(resolvedSandboxOptions.debug ?? [])
@@ -656,396 +616,6 @@ export class VM {
   exec(command: ExecInput, options: ExecOptions = {}): ExecProcess {
     const proc = this.execInternal(command, options);
     return proc;
-  }
-
-  /**
-   * Create a readable stream for a guest file.
-   */
-  async readFileStream(
-    filePath: string,
-    options: VmReadFileStreamOptions = {},
-  ): Promise<Readable> {
-    if (typeof filePath !== "string" || filePath.length === 0) {
-      throw new Error("filePath must be a non-empty string");
-    }
-
-    const vfsPath = this.resolveVfsShortcutPath(filePath, options.cwd);
-    if (vfsPath) {
-      try {
-        return this.readFileStreamFromVfs(vfsPath, options);
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(`failed to stream guest file '${filePath}': ${detail}`);
-      }
-    }
-
-    await this.start();
-
-    const server = this.server;
-    if (!server) {
-      throw new Error("sandbox server is not available");
-    }
-
-    try {
-      return await server.readGuestFileStream(filePath, {
-        cwd: options.cwd,
-        chunkSize: options.chunkSize,
-        highWaterMark: options.highWaterMark,
-        signal: options.signal,
-      });
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`failed to stream guest file '${filePath}': ${detail}`);
-    }
-  }
-
-  /**
-   * Read a file from inside the running guest.
-   */
-  readFile(filePath: string, options: VmReadFileTextOptions): Promise<string>;
-  readFile(
-    filePath: string,
-    options?: VmReadFileBufferOptions,
-  ): Promise<Buffer>;
-  async readFile(
-    filePath: string,
-    options: VmReadFileOptions = {},
-  ): Promise<string | Buffer> {
-    if (typeof filePath !== "string" || filePath.length === 0) {
-      throw new Error("filePath must be a non-empty string");
-    }
-
-    const vfsPath = this.resolveVfsShortcutPath(filePath, options.cwd);
-    let data: Buffer;
-    if (vfsPath) {
-      try {
-        data = await this.readFileFromVfs(vfsPath, {
-          chunkSize: options.chunkSize,
-          signal: options.signal,
-        });
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(`failed to read guest file '${filePath}': ${detail}`);
-      }
-    } else {
-      await this.start();
-
-      const server = this.server;
-      if (!server) {
-        throw new Error("sandbox server is not available");
-      }
-
-      try {
-        data = await server.readGuestFile(filePath, {
-          cwd: options.cwd,
-          chunkSize: options.chunkSize,
-          signal: options.signal,
-        });
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(`failed to read guest file '${filePath}': ${detail}`);
-      }
-    }
-
-    if ("encoding" in options && options.encoding) {
-      return data.toString(options.encoding);
-    }
-
-    return data;
-  }
-
-  /**
-   * Write file content inside the running guest.
-   *
-   * Existing files are truncated.
-   */
-  async writeFile(
-    filePath: string,
-    data: VmWriteFileInput,
-    options: VmWriteFileOptions = {},
-  ): Promise<void> {
-    if (typeof filePath !== "string" || filePath.length === 0) {
-      throw new Error("filePath must be a non-empty string");
-    }
-
-    const vfsPath = this.resolveVfsShortcutPath(filePath, options.cwd);
-    const payload =
-      typeof data === "string"
-        ? Buffer.from(data, options.encoding ?? "utf-8")
-        : data;
-
-    if (vfsPath) {
-      try {
-        await this.writeFileToVfs(vfsPath, payload, options.signal);
-        return;
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(`failed to write guest file '${filePath}': ${detail}`);
-      }
-    }
-
-    await this.start();
-
-    const server = this.server;
-    if (!server) {
-      throw new Error("sandbox server is not available");
-    }
-
-    try {
-      await server.writeGuestFile(filePath, payload, {
-        cwd: options.cwd,
-        signal: options.signal,
-      });
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`failed to write guest file '${filePath}': ${detail}`);
-    }
-  }
-
-  /**
-   * Delete a file or directory inside the running guest.
-   */
-  async deleteFile(
-    filePath: string,
-    options: VmDeleteFileOptions = {},
-  ): Promise<void> {
-    if (typeof filePath !== "string" || filePath.length === 0) {
-      throw new Error("filePath must be a non-empty string");
-    }
-
-    const vfsPath = this.resolveVfsShortcutPath(filePath, options.cwd);
-    if (vfsPath) {
-      try {
-        await this.deleteVfsPath(vfsPath, {
-          force: options.force,
-          recursive: options.recursive,
-          signal: options.signal,
-        });
-        return;
-      } catch (err) {
-        const detail = err instanceof Error ? err.message : String(err);
-        throw new Error(`failed to delete guest file '${filePath}': ${detail}`);
-      }
-    }
-
-    await this.start();
-
-    const server = this.server;
-    if (!server) {
-      throw new Error("sandbox server is not available");
-    }
-
-    try {
-      await server.deleteGuestFile(filePath, {
-        force: options.force,
-        recursive: options.recursive,
-        cwd: options.cwd,
-        signal: options.signal,
-      });
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : String(err);
-      throw new Error(`failed to delete guest file '${filePath}': ${detail}`);
-    }
-  }
-
-  private resolveVfsShortcutPath(
-    filePath: string,
-    cwd?: string,
-  ): string | null {
-    if (!this.vfs) return null;
-
-    const absolutePath = resolveAbsoluteGuestPath(filePath, cwd);
-    if (!absolutePath) return null;
-
-    for (const mountPath of this.shortcutBindMounts) {
-      if (isUnderMountPoint(absolutePath, mountPath)) {
-        return absolutePath;
-      }
-    }
-
-    if (isUnderMountPoint(absolutePath, this.fuseMount)) {
-      return getRelativePath(absolutePath, this.fuseMount);
-    }
-
-    return null;
-  }
-
-  private readFileStreamFromVfs(
-    filePath: string,
-    options: VmReadFileStreamOptions,
-  ): Readable {
-    assertNotAborted(options.signal, "file read aborted");
-    const chunkSize =
-      normalizePositiveInt(options.chunkSize, DEFAULT_VFS_FILE_CHUNK_SIZE) ??
-      DEFAULT_VFS_FILE_CHUNK_SIZE;
-    const highWaterMark = normalizePositiveInt(options.highWaterMark);
-    const stream = Readable.from(
-      this.iterateVfsFileChunks(filePath, chunkSize, options.signal),
-      highWaterMark
-        ? { objectMode: false, highWaterMark }
-        : { objectMode: false },
-    );
-    stream.on("error", () => {
-      // keep process alive if caller does not attach an error handler
-    });
-    return stream;
-  }
-
-  private async readFileFromVfs(
-    filePath: string,
-    options: { chunkSize?: number; signal?: AbortSignal },
-  ): Promise<Buffer> {
-    const chunkSize =
-      normalizePositiveInt(options.chunkSize, DEFAULT_VFS_FILE_CHUNK_SIZE) ??
-      DEFAULT_VFS_FILE_CHUNK_SIZE;
-    const chunks: Buffer[] = [];
-    for await (const chunk of this.iterateVfsFileChunks(
-      filePath,
-      chunkSize,
-      options.signal,
-    )) {
-      chunks.push(chunk);
-    }
-    return Buffer.concat(chunks);
-  }
-
-  private async *iterateVfsFileChunks(
-    filePath: string,
-    chunkSize: number,
-    signal?: AbortSignal,
-  ): AsyncIterable<Buffer> {
-    const vfs = this.vfs;
-    if (!vfs) {
-      throw new Error("vfs provider is not available");
-    }
-
-    assertNotAborted(signal, "file read aborted");
-    const handle = await vfs.open(filePath, "r");
-    try {
-      const buffer = Buffer.alloc(chunkSize);
-      let offset = 0;
-
-      while (true) {
-        assertNotAborted(signal, "file read aborted");
-        const { bytesRead } = await handle.read(
-          buffer,
-          0,
-          buffer.length,
-          offset,
-        );
-        if (bytesRead === 0) {
-          return;
-        }
-
-        offset += bytesRead;
-        yield Buffer.from(buffer.subarray(0, bytesRead));
-      }
-    } finally {
-      await handle.close();
-    }
-  }
-
-  private async writeFileToVfs(
-    filePath: string,
-    input: VmWriteFileInput,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const vfs = this.vfs;
-    if (!vfs) {
-      throw new Error("vfs provider is not available");
-    }
-
-    assertNotAborted(signal, "file write aborted");
-    const handle = await vfs.open(filePath, "w");
-    try {
-      let position = 0;
-      for await (const chunk of toBufferIterable(input)) {
-        assertNotAborted(signal, "file write aborted");
-
-        let offset = 0;
-        while (offset < chunk.length) {
-          const { bytesWritten } = await handle.write(
-            chunk,
-            offset,
-            chunk.length - offset,
-            position + offset,
-          );
-          if (bytesWritten <= 0) {
-            throw new Error("short write");
-          }
-          offset += bytesWritten;
-        }
-
-        position += chunk.length;
-      }
-    } finally {
-      await handle.close();
-    }
-  }
-
-  private async deleteVfsPath(
-    filePath: string,
-    options: { force?: boolean; recursive?: boolean; signal?: AbortSignal },
-  ): Promise<void> {
-    const vfs = this.vfs;
-    if (!vfs) {
-      throw new Error("vfs provider is not available");
-    }
-
-    try {
-      assertNotAborted(options.signal, "file delete aborted");
-      if (!options.recursive) {
-        await vfs.unlink(filePath);
-        return;
-      }
-
-      const stats = await vfs.lstat(filePath);
-      if (stats.isDirectory()) {
-        await this.deleteVfsTree(filePath, options.signal);
-      } else {
-        await vfs.unlink(filePath);
-      }
-    } catch (err) {
-      if (options.force && isNoEntryError(err)) {
-        return;
-      }
-      throw err;
-    }
-  }
-
-  private async deleteVfsTree(
-    filePath: string,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    const vfs = this.vfs;
-    if (!vfs) {
-      throw new Error("vfs provider is not available");
-    }
-
-    assertNotAborted(signal, "file delete aborted");
-    const entries = await vfs.readdir(filePath, { withFileTypes: true });
-
-    for (const entry of entries) {
-      assertNotAborted(signal, "file delete aborted");
-      const name = typeof entry === "string" ? entry : entry.name;
-      if (!name || name === "." || name === "..") {
-        continue;
-      }
-
-      const childPath = path.posix.join(filePath, name);
-      const isDir =
-        typeof entry === "string"
-          ? (await vfs.lstat(childPath)).isDirectory()
-          : entry.isDirectory() && !entry.isSymbolicLink();
-
-      if (isDir) {
-        await this.deleteVfsTree(childPath, signal);
-      } else {
-        await vfs.unlink(childPath);
-      }
-    }
-
-    await vfs.rmdir(filePath);
   }
 
   /**
@@ -2220,38 +1790,6 @@ fi
       throw new Error("sandbox connection is not available");
     }
     this.connection.send(message);
-  }
-}
-
-function resolveAbsoluteGuestPath(
-  filePath: string,
-  cwd?: string,
-): string | null {
-  if (filePath.startsWith("/")) {
-    return normalizeVfsPath(filePath);
-  }
-  if (!cwd || !cwd.startsWith("/")) {
-    return null;
-  }
-  return normalizeVfsPath(path.posix.join(cwd, filePath));
-}
-
-function normalizePositiveInt(
-  value: number | undefined,
-  fallback?: number,
-): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return fallback;
-  }
-  return Math.trunc(value);
-}
-
-function assertNotAborted(
-  signal: AbortSignal | undefined,
-  message: string,
-): void {
-  if (signal?.aborted) {
-    throw new Error(message);
   }
 }
 
