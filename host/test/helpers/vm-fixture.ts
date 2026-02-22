@@ -158,34 +158,6 @@ export async function closeVm(key: string): Promise<void> {
   }
 }
 
-export async function closeAllVms(): Promise<void> {
-  const entries = Array.from(pool.values());
-  const inflightEntries = Array.from(pending.values());
-  pool.clear();
-  pending.clear();
-  await Promise.all(entries.map(({ vm }) => closeWithTimeout(vm)));
-  await Promise.all(
-    inflightEntries.map(async (p) => {
-      let timeout: NodeJS.Timeout | null = null;
-      try {
-        const entry = await Promise.race([
-          p,
-          new Promise<null>((resolve) => {
-            timeout = setTimeout(() => resolve(null), 5000);
-          }),
-        ]);
-        if (entry) await closeWithTimeout(entry.vm);
-      } catch {
-        // ignore
-      } finally {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-      }
-    }),
-  );
-}
-
 /**
  * Schedule a hard process.exit() as a safety net.  If vm.close() fails to
  * kill the QEMU child, the orphaned process keeps node alive via its stdio
