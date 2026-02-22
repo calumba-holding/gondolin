@@ -5,7 +5,7 @@ import path from "path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runPostBuildCommands } from "../src/build-alpine";
+import { runPostBuildCommands } from "../src/alpine-packages";
 import type { Architecture } from "../src/build-config";
 
 function runtimeArch(): Architecture {

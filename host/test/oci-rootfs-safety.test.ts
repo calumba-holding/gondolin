@@ -5,7 +5,13 @@ import path from "path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __test as buildAlpineTest } from "../src/build-alpine";
+import { buildOciCreateArgs, exportOciRootfs } from "../src/alpine-oci";
+import {
+  assertSafeWritePath,
+  ensureRootfsShell,
+  hardenExtractedRootfs,
+} from "../src/alpine-rootfs";
+import { syncKernelModules } from "../src/alpine-kernel-modules";
 
 function writeCreateFailRuntime(binDir: string): void {
   const runtimePath = path.join(binDir, "docker");
@@ -103,7 +109,7 @@ exit 0
 }
 
 test("oci rootfs: buildOciCreateArgs includes dummy command", () => {
-  const args = (buildAlpineTest as any).buildOciCreateArgs(
+  const args = buildOciCreateArgs(
     "docker.io/library/debian:bookworm-slim",
     "linux/amd64",
     "never",
@@ -138,7 +144,7 @@ test("oci rootfs: pullPolicy always tolerates large pull output", () => {
     process.env.FAKE_REPO_DIGEST =
       "docker.io/library/debian@sha256:4444444444444444444444444444444444444444444444444444444444444444";
 
-    (buildAlpineTest as any).exportOciRootfs({
+    exportOciRootfs({
       arch: "x86_64",
       image: "docker.io/library/debian:bookworm-slim",
       runtime: "docker",
@@ -179,7 +185,7 @@ test("oci rootfs: pullPolicy never propagates non-missing runtime errors", () =>
 
     assert.throws(
       () =>
-        (buildAlpineTest as any).exportOciRootfs({
+        exportOciRootfs({
           arch: "x86_64",
           image: "docker.io/library/debian:bookworm-slim",
           runtime: "docker",
@@ -206,7 +212,7 @@ test("oci rootfs: hardenExtractedRootfs rejects escaping relative symlinks", () 
 
   try {
     assert.throws(
-      () => (buildAlpineTest as any).hardenExtractedRootfs(rootfsDir),
+      () => hardenExtractedRootfs(rootfsDir),
       /escaping the rootfs/,
     );
   } finally {
@@ -222,12 +228,12 @@ test("oci rootfs: hardenExtractedRootfs rewrites absolute symlinks", () => {
   fs.symlinkSync("/tmp/hostdir", path.join(rootfsDir, "usr"));
 
   try {
-    (buildAlpineTest as any).hardenExtractedRootfs(rootfsDir);
+    hardenExtractedRootfs(rootfsDir);
 
     assert.equal(fs.readlinkSync(path.join(rootfsDir, "usr")), "tmp/hostdir");
     assert.throws(
       () =>
-        (buildAlpineTest as any).assertSafeWritePath(
+        assertSafeWritePath(
           path.join(rootfsDir, "usr", "bin", "sandboxd"),
           rootfsDir,
         ),
@@ -260,7 +266,7 @@ test("oci rootfs: syncKernelModules handles /lib -> usr/lib symlink", () => {
   fs.writeFileSync(path.join(initModuleDir, "virtio_blk.ko"), "module");
 
   try {
-    (buildAlpineTest as any).syncKernelModules(
+    syncKernelModules(
       rootfsDir,
       initramfsDir,
       () => {},
@@ -306,7 +312,7 @@ test("oci rootfs: ensureRootfsShell bootstraps busybox from initramfs", () => {
   fs.symlinkSync("../bin/busybox", path.join(initramfsDir, "sbin", "modprobe"));
 
   try {
-    (buildAlpineTest as any).ensureRootfsShell(
+    ensureRootfsShell(
       rootfsDir,
       "gcr.io/distroless/nodejs24-debian12",
       initramfsDir,

@@ -5,7 +5,7 @@ import path from "path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { __test as buildAlpineTest } from "../src/build-alpine";
+import { exportOciRootfs } from "../src/alpine-oci";
 
 function writeFakeDockerRuntime(binDir: string): void {
   const runtimePath = path.join(binDir, "docker");
@@ -150,7 +150,7 @@ test("oci pullPolicy never: fails when requested platform is not local", () => {
 
     assert.throws(
       () =>
-        (buildAlpineTest as any).exportOciRootfs({
+        exportOciRootfs({
           arch: "x86_64",
           image: "docker.io/library/debian:bookworm-slim",
           runtime: "docker",
@@ -205,7 +205,7 @@ test("oci pullPolicy if-not-present: pulls when requested platform is not local"
     process.env.FAKE_REPO_DIGEST =
       "docker.io/library/debian@sha256:2222222222222222222222222222222222222222222222222222222222222222";
 
-    (buildAlpineTest as any).exportOciRootfs({
+    exportOciRootfs({
       arch: "x86_64",
       image: "docker.io/library/debian:bookworm-slim",
       runtime: "docker",
@@ -266,7 +266,7 @@ test("oci pullPolicy never: export create uses --pull=never", () => {
     process.env.FAKE_REPO_DIGEST =
       "docker.io/library/debian@sha256:3333333333333333333333333333333333333333333333333333333333333333";
 
-    (buildAlpineTest as any).exportOciRootfs({
+    exportOciRootfs({
       arch: "x86_64",
       image: "docker.io/library/debian:bookworm-slim",
       runtime: "docker",
@@ -319,7 +319,7 @@ test("oci export: returns resolved image digest metadata", () => {
     process.env.FAKE_REPO_DIGEST =
       "docker.io/library/debian@sha256:1111111111111111111111111111111111111111111111111111111111111111";
 
-    const metadata = (buildAlpineTest as any).exportOciRootfs({
+    const metadata = exportOciRootfs({
       arch: "x86_64",
       image: "docker.io/library/debian:bookworm-slim",
       runtime: "docker",
@@ -365,7 +365,7 @@ test("oci export: fails when runtime does not report RepoDigests", () => {
 
     assert.throws(
       () =>
-        (buildAlpineTest as any).exportOciRootfs({
+        exportOciRootfs({
           arch: "x86_64",
           image: "docker.io/library/debian:bookworm-slim",
           runtime: "docker",
