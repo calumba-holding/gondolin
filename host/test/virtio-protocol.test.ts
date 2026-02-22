@@ -12,7 +12,7 @@ import {
   decodeMessage,
   encodeFrame,
   normalize,
-} from "../src/virtio-protocol";
+} from "../src/sandbox/virtio-protocol";
 
 test("virtio-protocol: FrameReader reassembles frames from partial chunks", () => {
   const reader = new FrameReader();

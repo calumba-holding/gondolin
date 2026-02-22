@@ -3,7 +3,7 @@ import type { Stats } from "node:fs";
 import path from "path";
 import { Readable } from "stream";
 
-import { toBufferIterable } from "../buffer-iter";
+import { toBufferIterable } from "../utils/buffer-iter";
 import type { ExecResult } from "../exec";
 import type { SandboxServer } from "../sandbox/server";
 import {

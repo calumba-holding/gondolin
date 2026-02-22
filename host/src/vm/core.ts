@@ -24,7 +24,7 @@ import {
   StatusMessage,
   decodeOutputFrame,
   type ClientMessage,
-} from "../control-protocol";
+} from "../sandbox/control-protocol";
 import { SandboxServer } from "../sandbox/server";
 import {
   type ResolvedSandboxServerOptions,
@@ -42,7 +42,7 @@ import {
 } from "../session-registry";
 import type { DnsOptions, HttpFetch, HttpHooks } from "../qemu/net";
 import type { SshOptions } from "../qemu/ssh";
-import { createMitmCaProvider, resolveMitmMounts } from "../mitm-vfs";
+import { createMitmCaProvider, resolveMitmMounts } from "./mitm-vfs";
 import {
   buildShellEnv,
   envInputToEntries,

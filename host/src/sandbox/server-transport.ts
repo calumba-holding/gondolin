@@ -8,7 +8,7 @@ import {
   IncomingMessage,
   decodeMessage,
   encodeFrame,
-} from "../virtio-protocol";
+} from "./virtio-protocol";
 
 export const MAX_REQUEST_ID = 0xffffffff;
 

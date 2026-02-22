@@ -18,8 +18,8 @@ import {
   decodeMessage,
   encodeFrame,
   IncomingMessage,
-} from "../src/virtio-protocol";
-import { attachTty } from "../src/tty-attach";
+} from "../src/sandbox/virtio-protocol";
+import { attachTty } from "../src/utils/tty-attach";
 import {
   getDefaultBuildConfig,
   serializeBuildConfig,
@@ -38,7 +38,7 @@ import {
   decodeOutputFrame,
   type ServerMessage,
   type SnapshotResponseMessage,
-} from "../src/control-protocol";
+} from "../src/sandbox/control-protocol";
 
 type Command = {
   cmd: string;

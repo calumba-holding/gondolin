@@ -1,6 +1,6 @@
 import { Duplex, PassThrough, Readable } from "stream";
 
-import { toBufferIterable } from "../buffer-iter";
+import { toBufferIterable } from "../utils/buffer-iter";
 import {
   buildExecRequest,
   buildExecWindow,
@@ -10,7 +10,7 @@ import {
   buildFileWriteRequest,
   buildPtyResize,
   buildStdinData,
-} from "../virtio-protocol";
+} from "./virtio-protocol";
 import {
   type BootCommandMessage,
   type ClientMessage,
@@ -18,7 +18,7 @@ import {
   type ExecWindowCommandMessage,
   type PtyResizeCommandMessage,
   type StdinCommandMessage,
-} from "../control-protocol";
+} from "./control-protocol";
 import type { SandboxState } from "./controller";
 import {
   type GuestFileDeleteOptions,

@@ -23,7 +23,7 @@ import {
   isLocalhostDnsName,
   isProbablyDnsPacket,
   parseDnsQuery,
-} from "../dns";
+} from "./dns";
 import { Agent, fetch as undiciFetch } from "undici";
 
 import { AsyncSemaphore } from "../utils/async";
@@ -85,7 +85,7 @@ import {
   TcpSendMessage,
   TcpFlowProtocol,
   UdpSendMessage,
-} from "../network-stack";
+} from "./network-stack";
 
 type UdpSession = {
   socket: dgram.Socket;

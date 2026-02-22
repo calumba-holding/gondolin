@@ -4,7 +4,7 @@ import {
   DNS_TYPE_A,
   DNS_TYPE_AAAA,
   DNS_CLASS_IN,
-} from "../../src/dns";
+} from "../../src/qemu/dns";
 import { XorShift32 } from "../rng";
 import type { FuzzTarget } from "./types";
 

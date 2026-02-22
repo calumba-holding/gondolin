@@ -5,7 +5,7 @@ import {
   decodeMessage,
   encodeFrame,
   buildExecRequest,
-} from "../../src/virtio-protocol";
+} from "../../src/sandbox/virtio-protocol";
 import { XorShift32 } from "../rng";
 import type { FuzzTarget } from "./types";
 

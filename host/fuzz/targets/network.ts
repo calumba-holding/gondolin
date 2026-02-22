@@ -1,4 +1,4 @@
-import { NetworkStack } from "../../src/network-stack";
+import { NetworkStack } from "../../src/qemu/network-stack";
 import { XorShift32 } from "../rng";
 import type { FuzzTarget } from "./types";
 

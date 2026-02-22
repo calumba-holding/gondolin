@@ -2,7 +2,7 @@ import type {
   ClientMessage,
   ErrorMessage,
   ServerMessage,
-} from "../control-protocol";
+} from "./control-protocol";
 
 export type SandboxClient = {
   sendJson: (message: ServerMessage) => boolean;

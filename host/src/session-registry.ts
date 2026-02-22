@@ -17,7 +17,7 @@ import {
   type SnapshotCommandMessage,
   type SnapshotResponseMessage,
   type StdinCommandMessage,
-} from "./control-protocol";
+} from "./sandbox/control-protocol";
 
 const CACHE_BASE =
   process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), ".cache");

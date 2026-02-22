@@ -5,7 +5,7 @@ import type { Dirent, Stats } from "node:fs";
 import { createErrnoError } from "./errors";
 import type { VirtualFileHandle, VirtualProvider, VfsStatfs } from "./node";
 import { cloneSyntheticStatfs, isErrnoValue, normalizeStatfs } from "./statfs";
-import type { FsRequest, FsResponse } from "../virtio-protocol";
+import type { FsRequest, FsResponse } from "../sandbox/virtio-protocol";
 
 const { errno: ERRNO } = os.constants;
 

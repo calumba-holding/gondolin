@@ -4,7 +4,7 @@ import { Duplex, PassThrough, Readable } from "stream";
 
 import { getHostNodeArchCached } from "../host/arch";
 import { AsyncSingleflight } from "../utils/async";
-import { toBufferIterable } from "../buffer-iter";
+import { toBufferIterable } from "../utils/buffer-iter";
 import {
   buildExecRequest,
   buildPtyResize,
@@ -14,7 +14,7 @@ import {
   buildFileReadRequest,
   buildFileWriteData,
   buildFileWriteRequest,
-} from "../virtio-protocol";
+} from "./virtio-protocol";
 import {
   BootCommandMessage,
   ClientMessage,
@@ -23,7 +23,7 @@ import {
   PtyResizeCommandMessage,
   StdinCommandMessage,
   encodeOutputFrame,
-} from "../control-protocol";
+} from "./control-protocol";
 import {
   SandboxController,
   SandboxConfig,
