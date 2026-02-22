@@ -1077,24 +1077,35 @@ function resolveLocalOciImageDigest(
   }
 
   const digests = parseRepoDigestsOutput(output);
-  if (digests.length === 0) {
-    throw new Error(
-      `Failed to resolve OCI digest metadata for '${image}': runtime did not report RepoDigests`,
-    );
+  if (digests.length > 0) {
+    const preferredDigest =
+      pickRepoDigestReference(image, digests) ?? digests[0];
+    const digest = extractDigestFromImageReference(preferredDigest);
+    if (!digest) {
+      throw new Error(
+        `Failed to resolve OCI digest metadata for '${image}': invalid RepoDigest '${preferredDigest}'`,
+      );
+    }
+
+    return {
+      reference: preferredDigest,
+      digest,
+    };
   }
 
-  const preferredDigest = pickRepoDigestReference(image, digests) ?? digests[0];
-  const digest = extractDigestFromImageReference(preferredDigest);
-  if (!digest) {
-    throw new Error(
-      `Failed to resolve OCI digest metadata for '${image}': invalid RepoDigest '${preferredDigest}'`,
-    );
+  // Some runtimes/local image states don't populate RepoDigests for tag references
+  // (for instance imported/tagged images). Fall back to the local image id digest.
+  const localDigest = resolveLocalOciImageIdDigest(runtime, image);
+  if (localDigest) {
+    return {
+      reference: `${normalizeImageRepository(image)}@${localDigest}`,
+      digest: localDigest,
+    };
   }
 
-  return {
-    reference: preferredDigest,
-    digest,
-  };
+  throw new Error(
+    `Failed to resolve OCI digest metadata for '${image}': runtime did not report RepoDigests`,
+  );
 }
 
 function parseRepoDigestsOutput(output: string): string[] {
@@ -1110,6 +1121,30 @@ function parseRepoDigestsOutput(output: string): string[] {
   } catch {
     return [];
   }
+}
+
+function resolveLocalOciImageIdDigest(
+  runtime: ContainerRuntime,
+  image: string,
+): string | null {
+  let output: string;
+  try {
+    output = runContainerCommand(runtime, [
+      "image",
+      "inspect",
+      image,
+      "--format",
+      "{{.Id}}",
+    ]);
+  } catch {
+    return null;
+  }
+
+  const match = output.match(/sha256:[a-fA-F0-9]{64}/);
+  if (!match) {
+    return null;
+  }
+  return match[0].toLowerCase();
 }
 
 function pickRepoDigestReference(
