@@ -17,11 +17,10 @@
     "./package.json": "./package.json"
   },
   "files": [
-    "dist/",
-    "vendor/"
+    "dist/"
   ],
   "scripts": {
-    "build": "rm -rf dist && tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json && cp -R src/vfs/node/vendored-node-vfs dist/src/vfs/node/vendored-node-vfs",
     "start": "node dist/bin/gondolin.js exec",
     "dev": "tsx bin/gondolin.ts exec",
     "test": "tsx --test test/*.test.ts",

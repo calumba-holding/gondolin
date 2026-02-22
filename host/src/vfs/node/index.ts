@@ -1,7 +1,6 @@
 "use strict";
 
 import type { Dirent, Stats } from "node:fs";
-import loader from "./loader";
 
 /** Filesystem-level statistics returned by the optional `statfs` provider method. */
 export type VfsStatfs = {
@@ -342,18 +341,19 @@ export interface VirtualFileSystemConstructor {
   ): VirtualFileSystem;
 }
 
-const { VirtualFileSystem } = loader.load("file_system") as {
+interface NodeVfsModule {
   VirtualFileSystem: VirtualFileSystemConstructor;
-};
-const { VirtualProvider } = loader.load("provider") as {
   VirtualProvider: VirtualProviderConstructor;
-};
-const { MemoryProvider } = loader.loadProvider("memory") as {
   MemoryProvider: MemoryProviderConstructor;
-};
-const { RealFSProvider } = loader.loadProvider("real") as {
   RealFSProvider: RealFSProviderConstructor;
-};
+}
+
+// GONDOLIN_VENDORED_NODE_VFS_PATCH_BEGIN
+const nodeVfs = require("./vendored-node-vfs/lib/vfs.js") as NodeVfsModule;
+// GONDOLIN_VENDORED_NODE_VFS_PATCH_END
+
+const { VirtualFileSystem, VirtualProvider, MemoryProvider, RealFSProvider } =
+  nodeVfs;
 
 function isVirtualProvider(value: unknown): value is VirtualProvider {
   return (

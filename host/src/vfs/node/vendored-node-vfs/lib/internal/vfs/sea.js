@@ -1,5 +1,13 @@
 'use strict';
 
+// GONDOLIN_VENDORED_NODE_VFS_PATCH: userland compatibility shim
+const {
+  primordials,
+  internalBinding,
+  patchRequire,
+} = require('./gondolin-shim');
+require = patchRequire(require);
+
 const { isSea, getAssetKeys } = internalBinding('sea');
 const { kEmptyObject, getLazy } = require('internal/util');
 const {

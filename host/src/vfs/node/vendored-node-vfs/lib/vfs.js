@@ -1,5 +1,13 @@
 'use strict';
 
+// GONDOLIN_VENDORED_NODE_VFS_PATCH: userland compatibility shim
+const {
+  primordials,
+  internalBinding,
+  patchRequire,
+} = require('./internal/vfs/gondolin-shim');
+require = patchRequire(require);
+
 const { VirtualFileSystem } = require('internal/vfs/file_system');
 const { VirtualProvider } = require('internal/vfs/provider');
 const { MemoryProvider } = require('internal/vfs/providers/memory');
