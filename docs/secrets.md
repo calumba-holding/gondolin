@@ -78,8 +78,8 @@ still added to the allowed host set.
 
 Important:
 
-- In `createHttpHooks`, user-provided `onRequestHead` / `onRequest` handlers may run after placeholder substitution
-- There is **no guarantee** that custom hooks (`onRequestHead` / `onRequest` / `onResponse`) only see placeholders
+- In `createHttpHooks`, user-provided `onRequest` handlers may run after placeholder substitution
+- There is **no guarantee** that custom hooks (`onRequest` / `onResponse`) only see placeholders
 
 Do not log request headers/URLs from hooks unless you are comfortable potentially logging real secret values.
 

@@ -23,6 +23,7 @@ import {
 } from "../src/http/utils";
 import * as qemuHttp from "../src/qemu/http";
 import * as qemuWs from "../src/qemu/ws";
+import { createHttpHooks } from "../src/http/hooks";
 import { EventEmitter } from "node:events";
 
 function makeBackend(
@@ -114,7 +115,6 @@ async function fetchHookAndRespond(
     httpVersion,
     write,
     waitForWritable,
-    enableBodyHook: true,
   });
 }
 
@@ -642,6 +642,199 @@ test("qemu-net: handleHttpDataWithWriter sends 100-continue for supported chunke
   assert.ok(Buffer.concat(writes).toString("ascii").includes("100 Continue"));
 });
 
+test("qemu-net: denied expect-continue content-length request is rejected before body", async () => {
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["allowed.example"],
+  });
+
+  let fetchCalls = 0;
+  const backend = makeBackend({
+    maxHttpBodyBytes: 1024,
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.10", family: 4 }]),
+    httpHooks,
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finished = false;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST / HTTP/1.1\r\n" +
+        "Host: denied.example\r\n" +
+        "Expect: 100-continue\r\n" +
+        "Content-Length: 5\r\n" +
+        "\r\n",
+    ),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finished = true;
+      },
+    },
+  );
+
+  assert.equal(finished, true);
+  assert.equal(fetchCalls, 0);
+
+  const output = Buffer.concat(writes).toString("ascii");
+  assert.ok(!output.includes("100 Continue"));
+  assert.match(output, /^HTTP\/1\.1 403 /);
+});
+
+test("qemu-net: denied expect-continue chunked request is rejected before body", async () => {
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["allowed.example"],
+  });
+
+  let fetchCalls = 0;
+  const backend = makeBackend({
+    maxHttpBodyBytes: 1024,
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.10", family: 4 }]),
+    httpHooks,
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finished = false;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST / HTTP/1.1\r\n" +
+        "Host: denied.example\r\n" +
+        "Expect: 100-continue\r\n" +
+        "Transfer-Encoding: chunked\r\n" +
+        "\r\n",
+    ),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finished = true;
+      },
+    },
+  );
+
+  assert.equal(finished, true);
+  assert.equal(fetchCalls, 0);
+
+  const output = Buffer.concat(writes).toString("ascii");
+  assert.ok(!output.includes("100 Continue"));
+  assert.match(output, /^HTTP\/1\.1 403 /);
+});
+
+test("qemu-net: expect-continue with custom onRequest rewrite is not rejected before hook", async () => {
+  let onRequestCalls = 0;
+
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["allowed.example"],
+    onRequest: (request) => {
+      onRequestCalls += 1;
+
+      const rewritten = new URL(request.url);
+      rewritten.hostname = "allowed.example";
+
+      const headers = new Headers(request.headers);
+      headers.set("host", "allowed.example");
+
+      return new Request(rewritten.toString(), {
+        method: request.method,
+        headers,
+        body: request.body,
+        ...(request.body ? ({ duplex: "half" } as const) : {}),
+      });
+    },
+  });
+
+  let fetchCalls = 0;
+  const backend = makeBackend({
+    maxHttpBodyBytes: 1024,
+    fetch: async (url) => {
+      fetchCalls += 1;
+      assert.equal(new URL(url).hostname, "allowed.example");
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.10", family: 4 }]),
+    httpHooks,
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finished = false;
+
+  const writer = {
+    scheme: "http" as const,
+    write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+    finish: () => {
+      finished = true;
+    },
+  };
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST / HTTP/1.1\r\n" +
+        "Host: denied.example\r\n" +
+        "Expect: 100-continue\r\n" +
+        "Content-Length: 5\r\n" +
+        "\r\n",
+    ),
+    writer,
+  );
+
+  const interim = Buffer.concat(writes).toString("ascii");
+  assert.ok(interim.includes("100 Continue"));
+  assert.ok(!/^HTTP\/1\.1 403 /.test(interim));
+  assert.equal(finished, false);
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from("hello"),
+    writer,
+  );
+
+  for (let i = 0; i < 50; i += 1) {
+    if (finished) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  assert.equal(fetchCalls, 1);
+  assert.equal(onRequestCalls, 1);
+  assert.equal(finished, true);
+
+  const output = Buffer.concat(writes).toString("ascii");
+  assert.ok(output.includes("100 Continue"));
+  assert.match(output, /HTTP\/1\.1 200 /);
+});
+
 test("qemu-net: handleHttpDataWithWriter enforces MAX_HTTP_PIPELINE_BYTES for chunked requests", async () => {
   const backend = makeBackend({ maxHttpBodyBytes: 1024 });
 
@@ -807,7 +1000,126 @@ test("qemu-net: fetchAndRespond enforces request policy hook", async () => {
   assert.equal(fetchCalls, 0);
 });
 
-test("qemu-net: onRequestHead can short-circuit with synthetic responses", async () => {
+test("qemu-net: first-hop prechecked policies run once", async () => {
+  let requestPolicyCalls = 0;
+  let ipPolicyCalls = 0;
+  let fetchCalls = 0;
+
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["example.com"],
+    isRequestAllowed: () => {
+      requestPolicyCalls += 1;
+      return true;
+    },
+    isIpAllowed: () => {
+      ipPolicyCalls += 1;
+      return true;
+    },
+  });
+
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.1", family: 4 }]),
+    httpHooks,
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finished = false;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from("GET /ok HTTP/1.1\r\nHost: example.com\r\n\r\n"),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finished = true;
+      },
+    },
+  );
+
+  assert.equal(finished, true);
+  assert.equal(fetchCalls, 1);
+  assert.equal(requestPolicyCalls, 1);
+  assert.equal(ipPolicyCalls, 1);
+  assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 200 /);
+});
+
+test("qemu-net: first-hop policy is rechecked after createHttpHooks secret mutation", async () => {
+  let requestPolicyCalls = 0;
+  let ipPolicyCalls = 0;
+  let fetchCalls = 0;
+
+  const { httpHooks, env } = createHttpHooks({
+    allowedHosts: ["example.com"],
+    secrets: {
+      API_KEY: {
+        hosts: ["example.com"],
+        value: "secret-value",
+      },
+    },
+    isRequestAllowed: (request) => {
+      requestPolicyCalls += 1;
+      return request.headers.get("authorization") !== "Bearer secret-value";
+    },
+    isIpAllowed: () => {
+      ipPolicyCalls += 1;
+      return true;
+    },
+  });
+
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.1", family: 4 }]),
+    httpHooks,
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finished = false;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "GET /ok HTTP/1.1\r\n" +
+        "Host: example.com\r\n" +
+        `Authorization: Bearer ${env.API_KEY}\r\n` +
+        "\r\n",
+    ),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finished = true;
+      },
+    },
+  );
+
+  assert.equal(finished, true);
+  assert.equal(fetchCalls, 0);
+  assert.equal(requestPolicyCalls, 2);
+  assert.equal(ipPolicyCalls, 1);
+  assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 403 /);
+});
+
+test("qemu-net: onRequest can short-circuit with synthetic responses", async () => {
   const writes: Buffer[] = [];
   let fetchCalls = 0;
   let responseHookCalls = 0;
@@ -822,7 +1134,7 @@ test("qemu-net: onRequestHead can short-circuit with synthetic responses", async
     },
     httpHooks: {
       isIpAllowed: () => true,
-      onRequestHead: () =>
+      onRequest: () =>
         new Response("synthetic", {
           status: 201,
           headers: { "x-source": "hook" },
@@ -865,7 +1177,68 @@ test("qemu-net: onRequestHead can short-circuit with synthetic responses", async
   assert.equal(body, "synthetic");
 });
 
-test("qemu-net: onRequestHead accepts undici.Response", async () => {
+test("qemu-net: onRequest short-circuit skips request and ip policy checks", async () => {
+  const writes: Buffer[] = [];
+  let fetchCalls = 0;
+
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("upstream", {
+        status: 200,
+        headers: { "content-length": "8" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.1", family: 4 }]),
+    httpHooks: {
+      isRequestAllowed: () => false,
+      isIpAllowed: () => false,
+      onRequest: async (request) => {
+        assert.equal(await request.clone().text(), "hello");
+        return new Response("synthetic", {
+          status: 202,
+          headers: { "x-source": "hook" },
+        });
+      },
+    },
+  });
+
+  const session: any = { http: undefined };
+  let finished = false;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST /submit HTTP/1.1\r\n" +
+        "Host: example.com\r\n" +
+        "Content-Length: 5\r\n" +
+        "\r\n" +
+        "hello",
+    ),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finished = true;
+      },
+    },
+  );
+
+  assert.equal(finished, true);
+  assert.equal(fetchCalls, 0);
+
+  const raw = Buffer.concat(writes).toString("utf8");
+  const head = raw.slice(0, raw.indexOf("\r\n\r\n")).toLowerCase();
+  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+
+  assert.match(head, /^http\/1\.1 202 /);
+  assert.match(head, /x-source: hook/);
+  assert.equal(body, "synthetic");
+});
+
+test("qemu-net: onRequest accepts undici.Response", async () => {
   const writes: Buffer[] = [];
 
   const backend = makeBackend({
@@ -875,7 +1248,7 @@ test("qemu-net: onRequestHead accepts undici.Response", async () => {
         headers: { "content-length": "8" },
       }),
     httpHooks: {
-      onRequestHead: () =>
+      onRequest: () =>
         new UndiciResponse("synthetic", {
           status: 201,
           headers: { "x-source": "undici" },
@@ -949,6 +1322,462 @@ test("qemu-net: onRequest accepts undici.Request", async () => {
 
   assert.equal(fetchCalls, 1);
   assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 200 /);
+});
+
+test("qemu-net: onRequest keeps in-place request header mutations", async () => {
+  let fetchCalls = 0;
+
+  const backend = makeBackend({
+    fetch: async (_url, init) => {
+      fetchCalls += 1;
+      assert.equal(
+        (init?.headers as Record<string, string>)?.["x-in-place"],
+        "1",
+      );
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    httpHooks: {
+      onRequest: (request) => {
+        request.headers.set("x-in-place", "1");
+        return request;
+      },
+    },
+  });
+
+  const request = {
+    method: "POST",
+    target: "/submit",
+    version: "HTTP/1.1",
+    headers: {
+      host: "example.com",
+      "content-length": "5",
+      "content-type": "text/plain",
+    },
+    body: Buffer.from("hello"),
+  };
+
+  await fetchHookAndRespond(backend, request, "http", () => {});
+  assert.equal(fetchCalls, 1);
+});
+
+test("qemu-net: onRequest consuming body and returning same request is rejected (buffered)", async () => {
+  let fetchCalls = 0;
+
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    httpHooks: {
+      onRequest: async (request) => {
+        await request.text();
+        return request;
+      },
+    },
+  });
+
+  const request = {
+    method: "POST",
+    target: "/submit",
+    version: "HTTP/1.1",
+    headers: {
+      host: "example.com",
+      "content-length": "5",
+      "content-type": "text/plain",
+    },
+    body: Buffer.from("hello"),
+  };
+
+  await assert.rejects(
+    () => fetchHookAndRespond(backend, request, "http", () => {}),
+    (err) => err instanceof HttpRequestBlockedError && err.status === 400,
+  );
+
+  assert.equal(fetchCalls, 0);
+});
+
+test("qemu-net: onRequest consuming body and returning same request is rejected (streaming)", async () => {
+  let fetchCalls = 0;
+
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    httpHooks: {
+      onRequest: async (request) => {
+        await request.text();
+        return request;
+      },
+    },
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finishResolve: (() => void) | null = null;
+  const finished = new Promise<void>((resolve) => {
+    finishResolve = resolve;
+  });
+
+  const writer = {
+    scheme: "http" as const,
+    write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+    finish: () => finishResolve?.(),
+  };
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST /stream HTTP/1.1\r\n" +
+        "Host: example.com\r\n" +
+        "Content-Length: 5\r\n" +
+        "\r\n" +
+        "h",
+    ),
+    writer,
+  );
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from("ello"),
+    writer,
+  );
+
+  await finished;
+
+  assert.equal(fetchCalls, 0);
+  assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 400 /);
+});
+
+test("qemu-net: createHttpHooks onRequest keeps streaming uploads streaming", async () => {
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["example.com"],
+  });
+
+  let fetchCalls = 0;
+
+  const backend = makeBackend({
+    fetch: async (_url, init) => {
+      fetchCalls += 1;
+
+      const body = init?.body as ReadableStream<Uint8Array> | undefined;
+      if (body) {
+        const reader = body.getReader();
+        const first = await reader.read();
+        assert.equal(first.done, false);
+        assert.equal(Buffer.from(first.value!).toString("utf8"), "h");
+        await reader.cancel();
+      }
+
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    dnsLookup: dnsLookupStub([{ address: "203.0.113.1", family: 4 }]),
+    httpHooks,
+  });
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  let finished = false;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST /stream HTTP/1.1\r\n" +
+        "Host: example.com\r\n" +
+        "Content-Length: 5\r\n" +
+        "\r\n" +
+        "h",
+    ),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finished = true;
+      },
+    },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fetchCalls, 1);
+
+  assert.equal(finished, true);
+  const raw = Buffer.concat(writes).toString("utf8");
+  assert.match(raw, /^HTTP\/1\.1 200 /);
+});
+
+test("qemu-net: streaming onRequest clone-read preserves forwarded body", async () => {
+  for (const returnMode of ["undefined", "same-request"] as const) {
+    let fetchCalls = 0;
+    const writes: Buffer[] = [];
+    const session: any = { http: undefined };
+
+    let finishResolve: (() => void) | null = null;
+    const finished = new Promise<void>((resolve) => {
+      finishResolve = resolve;
+    });
+
+    const backend = makeBackend({
+      fetch: async (_url, init) => {
+        fetchCalls += 1;
+
+        const forwarded = new UndiciRequest("http://upstream.test/stream", {
+          method: init?.method,
+          headers: init?.headers,
+          body: init?.body as any,
+          ...(init?.body ? ({ duplex: "half" } as const) : {}),
+        } as RequestInit);
+
+        assert.equal(await forwarded.text(), "hello");
+
+        return new Response("ok", {
+          status: 200,
+          headers: { "content-length": "2" },
+        });
+      },
+      httpHooks: {
+        onRequest: async (request) => {
+          assert.equal(await request.clone().text(), "hello");
+          if (returnMode === "same-request") {
+            return request;
+          }
+          return undefined;
+        },
+      },
+    });
+
+    const writer = {
+      scheme: "http" as const,
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => finishResolve?.(),
+    };
+
+    await qemuHttp.handleHttpDataWithWriter(
+      backend,
+      "key",
+      session,
+      Buffer.from(
+        "POST /stream HTTP/1.1\r\n" +
+          "Host: example.com\r\n" +
+          "Content-Length: 5\r\n" +
+          "\r\n" +
+          "h",
+      ),
+      writer,
+    );
+
+    await qemuHttp.handleHttpDataWithWriter(
+      backend,
+      "key",
+      session,
+      Buffer.from("ello"),
+      writer,
+    );
+
+    await finished;
+
+    assert.equal(fetchCalls, 1, `expected fetch once for ${returnMode}`);
+    assert.match(
+      Buffer.concat(writes).toString("utf8"),
+      /^HTTP\/1\.1 200 /,
+      `expected successful forward for ${returnMode}`,
+    );
+  }
+});
+
+test("qemu-net: streaming onRequest body rewrite drains remaining upload bytes", async () => {
+  let releaseFetch: (() => void) | null = null;
+  const fetchGate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+
+  let fetchCalls = 0;
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      await fetchGate;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    httpHooks: {
+      onRequest: (request) => {
+        const headers = new Headers(request.headers);
+        headers.delete("content-length");
+        return new Request(request.url, {
+          method: request.method,
+          headers,
+        });
+      },
+    },
+  });
+
+  let abortCalls = 0;
+  const originalAbortTcpSession = backend.abortTcpSession.bind(backend);
+  (backend as any).abortTcpSession = (...args: any[]) => {
+    abortCalls += 1;
+    return originalAbortTcpSession(...args);
+  };
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  backend.tcpSessions.set("key", session);
+
+  let finished = false;
+  const writer = {
+    scheme: "http" as const,
+    write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+    finish: () => {
+      finished = true;
+    },
+  };
+
+  const contentLength = qemuHttp.MAX_HTTP_PIPELINE_BYTES + 2048;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.from(
+      "POST /stream HTTP/1.1\r\n" +
+        "Host: example.com\r\n" +
+        `Content-Length: ${contentLength}\r\n` +
+        "\r\n" +
+        "a",
+    ),
+    writer,
+  );
+
+  for (let i = 0; i < 50; i += 1) {
+    if (fetchCalls > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  assert.equal(fetchCalls, 1);
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.alloc(contentLength - 1, 0x62),
+    writer,
+  );
+
+  assert.equal(abortCalls, 0);
+
+  releaseFetch?.();
+
+  for (let i = 0; i < 50; i += 1) {
+    if (finished) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  assert.equal(finished, true);
+  assert.equal(abortCalls, 0);
+  assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 200 /);
+});
+
+test("qemu-net: streaming onRequest failure clears paused RX state", async () => {
+  let releaseHook: (() => void) | null = null;
+  const hookGate = new Promise<void>((resolve) => {
+    releaseHook = resolve;
+  });
+
+  let fetchCalls = 0;
+  const backend = makeBackend({
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("ok", {
+        status: 200,
+        headers: { "content-length": "2" },
+      });
+    },
+    httpHooks: {
+      onRequest: async () => {
+        await hookGate;
+        throw new HttpRequestBlockedError("blocked", 403, "Forbidden");
+      },
+    },
+  });
+
+  let pauseCalls = 0;
+  let resumeCalls = 0;
+  (backend as any).socket = {
+    pause: () => {
+      pauseCalls += 1;
+    },
+    resume: () => {
+      resumeCalls += 1;
+    },
+  };
+
+  const writes: Buffer[] = [];
+  const session: any = { http: undefined };
+  backend.tcpSessions.set("key", session);
+  let finishResolve: (() => void) | null = null;
+  const finished = new Promise<void>((resolve) => {
+    finishResolve = resolve;
+  });
+
+  const firstChunk = Buffer.alloc(600 * 1024, 0x61);
+  const totalLength = firstChunk.length + 16;
+
+  await qemuHttp.handleHttpDataWithWriter(
+    backend,
+    "key",
+    session,
+    Buffer.concat([
+      Buffer.from(
+        "POST /stream HTTP/1.1\r\n" +
+          "Host: example.com\r\n" +
+          `Content-Length: ${totalLength}\r\n` +
+          "\r\n",
+      ),
+      firstChunk,
+    ]),
+    {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        finishResolve?.();
+      },
+    },
+  );
+
+  for (let i = 0; i < 50; i += 1) {
+    if (backend.http.qemuRxPausedForHttpStreaming) break;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+
+  assert.equal(backend.http.qemuRxPausedForHttpStreaming, true);
+  assert.ok(pauseCalls > 0);
+
+  releaseHook?.();
+  await finished;
+
+  assert.equal(fetchCalls, 0);
+  assert.equal((session.http as any)?.streamingBody, undefined);
+  assert.equal(backend.http.qemuRxPausedForHttpStreaming, false);
+  assert.ok(resumeCalls > 0);
+  assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 403 /);
 });
 
 test("qemu-net: invalid onRequest result remains rejected", async () => {
@@ -1418,6 +2247,98 @@ test("qemu-net: websocket upgrades are tunneled when enabled", async () => {
   }
 
   await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+test("qemu-net: websocket upgrade prechecked request policy runs once", async () => {
+  const server = net.createServer((sock) => {
+    let buf = Buffer.alloc(0);
+    sock.on("data", (chunk) => {
+      buf = Buffer.concat([buf, chunk]);
+      if (buf.indexOf("\r\n\r\n") === -1) return;
+
+      sock.write(
+        "HTTP/1.1 101 Switching Protocols\r\n" +
+          "Upgrade: websocket\r\n" +
+          "Connection: Upgrade\r\n" +
+          "\r\n",
+      );
+      sock.end();
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+
+  const addr = server.address();
+  assert.ok(addr && typeof addr !== "string");
+
+  const requestPolicyCalls = { count: 0 };
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["example.com"],
+    blockInternalRanges: false,
+    isRequestAllowed: () => {
+      requestPolicyCalls.count += 1;
+      return true;
+    },
+  });
+
+  const backend = makeBackend({
+    httpHooks,
+    allowWebSockets: true,
+  });
+
+  backend.options.dnsLookup = dnsLookupStub([
+    { address: "127.0.0.1", family: 4 },
+  ]);
+
+  const key = "TCP:1.1.1.1:1234:2.2.2.2:80";
+  const session: any = {
+    socket: null,
+    srcIP: "1.1.1.1",
+    srcPort: 1234,
+    dstIP: "2.2.2.2",
+    dstPort: 80,
+    connectIP: "2.2.2.2",
+    flowControlPaused: false,
+    protocol: "http",
+    connected: false,
+    pendingWrites: [],
+    pendingWriteBytes: 0,
+  };
+
+  backend.tcpSessions.set(key, session);
+
+  const writes: Buffer[] = [];
+  const req = Buffer.from(
+    "GET /chat HTTP/1.1\r\n" +
+      `Host: example.com:${addr.port}\r\n` +
+      "Connection: Upgrade\r\n" +
+      "Upgrade: websocket\r\n" +
+      "Sec-WebSocket-Key: x\r\n" +
+      "Sec-WebSocket-Version: 13\r\n" +
+      "\r\n",
+  );
+
+  try {
+    await qemuHttp.handleHttpDataWithWriter(backend, key, session, req, {
+      scheme: "http",
+      write: (chunk: Buffer) => writes.push(Buffer.from(chunk)),
+      finish: () => {
+        // ignore
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    assert.equal(requestPolicyCalls.count, 1);
+    assert.match(Buffer.concat(writes).toString("utf8"), /^HTTP\/1\.1 101 /);
+  } finally {
+    try {
+      await backend.close();
+    } catch {
+      // ignore
+    }
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });
 
 test("qemu-net: websocket upstream connect timeout covers stalled tls handshake", async () => {

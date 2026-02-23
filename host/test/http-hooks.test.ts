@@ -27,13 +27,13 @@ function expectRequest(value: unknown): Request {
   return value as Request;
 }
 
-async function runRequestHead(
-  onRequestHead: NonNullable<
-    ReturnType<typeof createHttpHooks>["httpHooks"]["onRequestHead"]
+async function runRequestHook(
+  onRequest: NonNullable<
+    ReturnType<typeof createHttpHooks>["httpHooks"]["onRequest"]
   >,
   request: Request,
 ): Promise<Request> {
-  const result = await onRequestHead(request);
+  const result = await onRequest(request);
   const next = result ?? request;
 
   if (
@@ -349,8 +349,8 @@ test("http hooks replace secret placeholders", async () => {
 
   assert.ok(allowedHosts.includes("example.com"));
 
-  const request = await runRequestHead(
-    httpHooks.onRequestHead!,
+  const request = await runRequestHook(
+    httpHooks.onRequest!,
     makeRequest({
       method: "GET",
       url: "https://example.com/data",
@@ -374,8 +374,8 @@ test("http hooks keep placeholders in URL parameters by default", async () => {
   });
 
   const originalUrl = `https://example.com/data?token=${env.API_KEY}`;
-  const request = await runRequestHead(
-    httpHooks.onRequestHead!,
+  const request = await runRequestHook(
+    httpHooks.onRequest!,
     makeRequest({
       method: "GET",
       url: originalUrl,
@@ -396,8 +396,8 @@ test("http hooks can replace placeholders in URL parameters when enabled", async
     replaceSecretsInQuery: true,
   });
 
-  const request = await runRequestHead(
-    httpHooks.onRequestHead!,
+  const request = await runRequestHook(
+    httpHooks.onRequest!,
     makeRequest({
       method: "GET",
       url: `https://example.com/data?token=${env.API_KEY}&ok=1`,
@@ -421,7 +421,7 @@ test("http hooks reject URL parameter secrets on disallowed hosts when enabled",
 
   await assert.rejects(
     () =>
-      httpHooks.onRequestHead!(
+      httpHooks.onRequest!(
         makeRequest({
           method: "GET",
           url: `https://example.org/data?token=${env.API_KEY}`,
@@ -451,8 +451,8 @@ test("http hooks replace secret placeholders in basic auth", async () => {
   ).toString("base64");
   const expectedToken = Buffer.from("alice:s3cr3t", "utf8").toString("base64");
 
-  const request = await runRequestHead(
-    httpHooks.onRequestHead!,
+  const request = await runRequestHook(
+    httpHooks.onRequest!,
     makeRequest({
       method: "GET",
       url: "https://example.com/data",
@@ -486,7 +486,7 @@ test("http hooks reject basic auth secrets on disallowed hosts", async () => {
 
   await assert.rejects(
     () =>
-      httpHooks.onRequestHead!(
+      httpHooks.onRequest!(
         makeRequest({
           method: "GET",
           url: "https://example.org/data",
@@ -511,7 +511,7 @@ test("http hooks reject secrets on disallowed hosts", async () => {
 
   await assert.rejects(
     () =>
-      httpHooks.onRequestHead!(
+      httpHooks.onRequest!(
         makeRequest({
           method: "GET",
           url: "https://example.org/data",
@@ -536,7 +536,7 @@ test("http hooks reject already-substituted secrets on disallowed hosts", async 
 
   await assert.rejects(
     () =>
-      httpHooks.onRequestHead!(
+      httpHooks.onRequest!(
         makeRequest({
           method: "GET",
           url: "https://example.org/data",
@@ -549,7 +549,7 @@ test("http hooks reject already-substituted secrets on disallowed hosts", async 
   );
 });
 
-test("http hooks reject secrets if onRequestHead rewrites the destination", async () => {
+test("http hooks reject secrets if onRequest rewrites the destination", async () => {
   const { httpHooks, env } = createHttpHooks({
     secrets: {
       API_KEY: {
@@ -557,7 +557,7 @@ test("http hooks reject secrets if onRequestHead rewrites the destination", asyn
         value: "secret-value",
       },
     },
-    onRequestHead: (req) =>
+    onRequest: (req) =>
       new Request("https://example.org/data", {
         method: req.method,
         headers: req.headers,
@@ -567,7 +567,7 @@ test("http hooks reject secrets if onRequestHead rewrites the destination", asyn
   // Secret substitution must use the *final* destination, and block here.
   await assert.rejects(
     () =>
-      httpHooks.onRequestHead!(
+      httpHooks.onRequest!(
         makeRequest({
           method: "GET",
           url: "https://example.com/data",
@@ -580,7 +580,7 @@ test("http hooks reject secrets if onRequestHead rewrites the destination", asyn
   );
 });
 
-test("http hooks onRequestHead returns a Request when onRequest is configured", async () => {
+test("http hooks onRequest returns a Request when onRequest is configured", async () => {
   const { httpHooks, env } = createHttpHooks({
     secrets: {
       API_KEY: {
@@ -591,7 +591,7 @@ test("http hooks onRequestHead returns a Request when onRequest is configured", 
     onRequest: (req) => req,
   });
 
-  const result = await httpHooks.onRequestHead!(
+  const result = await httpHooks.onRequest!(
     makeRequest({
       method: "POST",
       url: "https://example.com/data",
@@ -605,17 +605,17 @@ test("http hooks onRequestHead returns a Request when onRequest is configured", 
   assert.equal(result.headers.get("authorization"), "Bearer secret-value");
 });
 
-test("http hooks accept undici.Request from onRequestHead", async () => {
+test("http hooks accept undici.Request from onRequest", async () => {
   const { httpHooks } = createHttpHooks({
-    onRequestHead: (req) =>
+    onRequest: (req) =>
       new UndiciRequest("https://example.com/rewrite", {
         method: req.method,
         headers: req.headers,
       }),
   });
 
-  const request = await runRequestHead(
-    httpHooks.onRequestHead!,
+  const request = await runRequestHook(
+    httpHooks.onRequest!,
     makeRequest({
       method: "GET",
       url: "https://example.com/data",
@@ -650,10 +650,10 @@ test("http hooks accept undici.Response from onRequest", async () => {
 
 test("http hooks reject invalid hook return values", async () => {
   const { httpHooks: headHooks } = createHttpHooks({
-    onRequestHead: () => ({}) as any,
+    onRequest: () => ({}) as any,
   });
   await assert.rejects(() =>
-    headHooks.onRequestHead!(
+    headHooks.onRequest!(
       makeRequest({ method: "GET", url: "https://example.com/data" }),
     ),
   );
@@ -710,6 +710,26 @@ test("http hooks pass request through custom handler", async () => {
   // The request returned to the bridge has secrets substituted.
   assert.equal(request.headers.get("authorization"), "Bearer secret-value");
   assert.equal(request.headers.get("x-extra"), "1");
+});
+
+test("http hooks preserve in-place onRequest header mutations", async () => {
+  const { httpHooks } = createHttpHooks({
+    onRequest: (request) => {
+      request.headers.set("x-inline", "1");
+      return request;
+    },
+  });
+
+  const result = await httpHooks.onRequest!(
+    makeRequest({
+      method: "POST",
+      url: "https://example.com/data",
+      body: "hello",
+    }),
+  );
+
+  const request = expectRequest(result);
+  assert.equal(request.headers.get("x-inline"), "1");
 });
 
 test("http hooks preserve request when handler returns void", async () => {

@@ -24,7 +24,7 @@ const { httpHooks, env } = createHttpHooks({
   blockInternalRanges: true, // default: true
   isRequestAllowed: (req) => req.method !== "DELETE",
   isIpAllowed: ({ ip }) => !ip.startsWith("203.0.113."),
-  onRequestHead: async (req) => {
+  onRequest: async (req) => {
     console.log(req.url);
     return req;
   },
@@ -37,23 +37,30 @@ const { httpHooks, env } = createHttpHooks({
 
 Egress hook behavior:
 
-- `onRequestHead(request)` receives a WHATWG `Request` with no body
-    - return `undefined` to keep it unchanged
-    - return a `Request` to continue with rewrites
-    - return a `Response` to short-circuit upstream fetch
-- `onRequest(request)` receives a WHATWG `Request` (buffered body path)
+- `onRequest(request)` receives a WHATWG `Request`
     - return `undefined` to keep it unchanged
     - return a `Request` to continue with rewrites, or a `Response` to short-circuit
-    - request bodies are one-shot streams; if you read the body and still forward, use `request.clone()` or return a new `Request`
+    - request bodies are one-shot streams; if you read the body and still forward unchanged, use `request.clone()`
 - `onResponse(response, request)` receives WHATWG `Response` + final `Request`
     - return `undefined` to keep it unchanged
     - return a `Response` to rewrite
 
-Important note: secrets maybe be expanded prior to `onRequestHead` and
-`onRequest` is invoked.  This means that if you use those functions for logging
-this may include secrets.
+Important note: secrets may be expanded before `onRequest` is invoked. This
+means request-hook logging may include secrets.
 
-Short-circuited responses skip upstream fetch (including DNS/IP policy checks) and do not call `onResponse`.
+Short-circuited responses skip upstream fetch (including DNS/IP policy checks)
+and do not call `onResponse`.
+
+To make body-aware decisions, read from a clone and keep forwarding:
+
+```ts
+onRequest: async (request) => {
+  const bodyText = await request.clone().text();
+  if (bodyText.includes("forbidden")) {
+    return new Response("blocked", { status: 403 });
+  }
+}
+```
 
 Notable consequences:
 

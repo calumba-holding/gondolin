@@ -147,7 +147,7 @@ export async function webRequestToInternalHttpRequest(
 
   if (!options.allowBody && value.body !== null) {
     throw new HttpRequestBlockedError(
-      "request body not allowed in onRequestHead",
+      "request body not allowed in this hook",
       400,
       "Bad Request",
     );

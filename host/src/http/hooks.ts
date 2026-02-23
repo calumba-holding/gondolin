@@ -1,7 +1,10 @@
 import crypto from "crypto";
 import net from "net";
 
-import type { HttpHooks } from "../qemu/contracts";
+import {
+  ON_REQUEST_EARLY_POLICY_SAFE,
+  type HttpHooks,
+} from "../qemu/contracts";
 import { HttpRequestBlockedError } from "./utils";
 import { extractIPv4Mapped, parseIPv6Hextets } from "../utils/ip";
 import { matchesAnyHost, normalizeHostnamePattern } from "../host/patterns";
@@ -27,9 +30,7 @@ export type CreateHttpHooksOptions = {
   /** custom ip policy callback */
   isIpAllowed?: HttpHooks["isIpAllowed"];
 
-  /** request head hook */
-  onRequestHead?: HttpHooks["onRequestHead"];
-  /** buffered request hook */
+  /** request hook */
   onRequest?: HttpHooks["onRequest"];
 
   /** response hook */
@@ -76,6 +77,7 @@ export function createHttpHooks(
   ]);
 
   const applySecretsToRequest = (request: Request): Request => {
+    assertRequestShape(request);
     const hostname = getHostname(request.url);
 
     // Defense-in-depth: if the request already contains real secret values (eg: because
@@ -100,11 +102,42 @@ export function createHttpHooks(
       options.replaceSecretsInQuery ?? false,
     );
 
+    if (url === request.url) {
+      if (headers !== request.headers) {
+        syncHeaders(request.headers, headers);
+      }
+      return request;
+    }
+
     return cloneRequestWith(request, {
       url,
       headers,
     });
   };
+
+  const onRequest: NonNullable<HttpHooks["onRequest"]> = async (request) => {
+    // Run user hooks first so rewrites can influence both secret allowlist checks
+    // and downstream policy evaluation.
+    let nextRequest = request;
+
+    if (options.onRequest) {
+      const updated = await options.onRequest(nextRequest);
+      if (updated) {
+        if ("status" in updated) {
+          return normalizeResponse(updated);
+        }
+        assertRequestShape(updated);
+        nextRequest = updated;
+      }
+    }
+
+    // Inject secrets at the last possible moment (after rewrites).
+    return applySecretsToRequest(nextRequest);
+  };
+
+  // Internal optimization: pre-body policy checks are only safe when no user
+  // onRequest callback can short-circuit/rewrite destination semantics.
+  onRequest[ON_REQUEST_EARLY_POLICY_SAFE] = !options.onRequest;
 
   const httpHooks: HttpHooks = {
     isRequestAllowed: async (request) => {
@@ -130,48 +163,9 @@ export function createHttpHooks(
       }
       return true;
     },
-    onRequestHead: async (request) => {
-      // Run user hooks first so any URL/Host rewrites are taken into account when
-      // evaluating which secrets may be substituted.
-      let nextRequest = request;
-
-      if (options.onRequestHead) {
-        const updated = await options.onRequestHead(nextRequest);
-        if (updated) {
-          if ("status" in updated) {
-            return normalizeResponse(updated);
-          }
-          nextRequest = updated;
-        }
-      }
-
-      // Inject secrets after head rewrites. This keeps host allowlist checks bound to
-      // the rewritten destination while still applying substitution before forwarding.
-      return applySecretsToRequest(nextRequest);
-    },
+    onRequest,
     onResponse: options.onResponse,
   };
-
-  // Only install `onRequest` when the caller explicitly provides it; in qemu-net,
-  // the presence of `httpHooks.onRequest` implies that request bodies must be buffered.
-  if (options.onRequest) {
-    httpHooks.onRequest = async (request) => {
-      // Run the buffered hook first so rewrites can influence secret allowlist checks.
-      let nextRequest = request;
-
-      const updated = await options.onRequest!(nextRequest);
-      if (updated) {
-        if ("status" in updated) {
-          return normalizeResponse(updated);
-        }
-
-        nextRequest = updated;
-      }
-
-      // Inject secrets at the last possible moment (after rewrites).
-      return applySecretsToRequest(nextRequest);
-    };
-  }
 
   return { httpHooks, env, allowedHosts };
 }
@@ -221,6 +215,43 @@ function cloneHeaders(headers: Headers): Headers {
     }
   }
   return cloned;
+}
+
+function assertRequestShape(value: unknown): asserts value is Request {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as any).url !== "string" ||
+    typeof (value as any).method !== "string" ||
+    typeof (value as any).headers?.forEach !== "function"
+  ) {
+    throw new TypeError(
+      "onRequest must return Request, Response, or undefined",
+    );
+  }
+}
+
+function syncHeaders(target: Headers, source: Headers): void {
+  const sourceKeys = new Set<string>();
+
+  source.forEach((_value, key) => {
+    sourceKeys.add(key.toLowerCase());
+  });
+
+  const toDelete: string[] = [];
+  target.forEach((_value, key) => {
+    if (!sourceKeys.has(key.toLowerCase())) {
+      toDelete.push(key);
+    }
+  });
+
+  for (const key of toDelete) {
+    target.delete(key);
+  }
+
+  source.forEach((value, key) => {
+    target.set(key, value);
+  });
 }
 
 function getHostname(url: string): string {
@@ -325,8 +356,9 @@ function replaceSecretPlaceholdersInHeaders(
   hostname: string,
   entries: SecretEntry[],
 ): Headers {
-  const headers = new Headers(incomingHeaders);
-  if (entries.length === 0) return headers;
+  if (entries.length === 0) return incomingHeaders;
+
+  let headers: Headers | null = null;
 
   for (const [headerName, value] of incomingHeaders.entries()) {
     let updated = value;
@@ -343,10 +375,15 @@ function replaceSecretPlaceholdersInHeaders(
       entries,
     );
 
-    headers.set(headerName, updated);
+    if (updated !== value) {
+      if (!headers) {
+        headers = new Headers(incomingHeaders);
+      }
+      headers.set(headerName, updated);
+    }
   }
 
-  return headers;
+  return headers ?? incomingHeaders;
 }
 
 function replaceSecretPlaceholdersInUrlParameters(

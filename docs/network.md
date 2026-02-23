@@ -270,13 +270,16 @@ The network layer exposes hooks so you can:
 
 Egress hooks use WHATWG `Request`/`Response` objects:
 
-- `onRequestHead(request)` sees request head only (no body)
-- `onRequest(request)` sees buffered request bodies
+- `onRequest(request)` runs before upstream fetch and may inspect/replace the request
 - `onResponse(response, request)` can rewrite upstream responses
 
-`onRequestHead` and `onRequest` may also return a synthetic `Response` to
-short-circuit upstream fetch. In that short-circuit path, upstream DNS/IP policy
-checks and fetch are skipped, and `onResponse` is not called.
+`onRequest` may return a synthetic `Response` to short-circuit upstream fetch. In
+that short-circuit path, upstream DNS/IP policy checks and fetch are skipped,
+and `onResponse` is not called.
+
+Request bodies are streams. If your hook needs body-aware decisions, read from
+`request.clone()` (for example with `await request.clone().text()`) and return
+`undefined` to keep forwarding unchanged.
 
 A key design principle is that hooks run on the host **after** the traffic has
 been parsed into structured HTTP requests, not on raw packets.

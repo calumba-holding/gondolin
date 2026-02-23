@@ -5,6 +5,18 @@ import type { Agent, fetch as undiciFetch } from "undici";
 
 export type HttpFetch = typeof undiciFetch;
 
+/** internal marker for onRequest hooks safe for pre-body policy precheck */
+export const ON_REQUEST_EARLY_POLICY_SAFE = Symbol.for(
+  "gondolin.http.onRequestEarlyPolicySafe",
+);
+
+export type HttpOnRequestHook = ((
+  request: Request,
+) => Promise<Request | Response | void> | Request | Response | void) & {
+  /** internal marker enabling pre-body policy checks */
+  [ON_REQUEST_EARLY_POLICY_SAFE]?: boolean;
+};
+
 export type HttpIpAllowInfo = {
   /** request hostname */
   hostname: string;
@@ -24,15 +36,8 @@ export type HttpHooks = {
   /** allow/deny callback for resolved destination ip */
   isIpAllowed?: (info: HttpIpAllowInfo) => Promise<boolean> | boolean;
 
-  /** request hook for request head (may rewrite request or short-circuit with response) */
-  onRequestHead?: (
-    request: Request,
-  ) => Promise<Request | Response | void> | Request | Response | void;
-
-  /** request hook for buffered requests (may rewrite request or short-circuit with response) */
-  onRequest?: (
-    request: Request,
-  ) => Promise<Request | Response | void> | Request | Response | void;
+  /** request hook (may rewrite request or short-circuit with response) */
+  onRequest?: HttpOnRequestHook;
 
   /** response rewrite hook */
   onResponse?: (
