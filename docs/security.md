@@ -316,7 +316,8 @@ These are rules to not compromise the security guarantees of the system:
 
 2. **Keep `blockInternalRanges: true`**
     - This is on by default in `createHttpHooks()`.
-    - Disabling it reintroduces localhost/metadata risks.
+    - Disabling it globally reintroduces localhost/metadata risks.
+    - If you need selected internal targets, prefer `allowedInternalHosts` for scoped exceptions
 
 3. **Assume allowed hosts can receive any data the guest can read**
     - Gondolin prevents network egress to *other* hosts, but does not stop the guest from uploading arbitrary data to an allowed host.

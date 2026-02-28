@@ -9,6 +9,7 @@ All notable changes to Gondolin are documented here.
 - Added internal request/response conversion helpers and expanded HTTP hook/network test coverage (including undici compatibility and body-size guardrails)
 - Updated networking/secrets docs to reflect the new hook API and short-circuit behavior
 - Reworked host VFS loading to import vendored `node:vfs` directly from `src/vfs/node/vendored-node-vfs`, removing the custom loader and adding clearly tagged patch markers for upstream syncs
+- Added `allowedInternalHosts` to `createHttpHooks()` for host-pattern-scoped internal-IP exceptions (without requiring duplicate `allowedHosts` entries), plus docs clarifying that `onRequest` short-circuit fetches run outside VM egress IP policy
 
 ## 0.5.0
 

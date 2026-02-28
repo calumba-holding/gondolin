@@ -19,6 +19,8 @@ export type SecretDefinition = {
 export type CreateHttpHooksOptions = {
   /** allowed host patterns (empty = allow all) */
   allowedHosts?: string[];
+  /** host patterns allowed to resolve to internal ip ranges */
+  allowedInternalHosts?: string[];
   /** secret definitions keyed by env var name */
   secrets?: Record<string, SecretDefinition>;
   /** placeholder replacement in URL query string (default: false) */
@@ -71,8 +73,11 @@ export function createHttpHooks(
     });
   }
 
+  const allowedInternalHosts = uniqueHosts(options.allowedInternalHosts ?? []);
+
   const allowedHosts = uniqueHosts([
     ...(options.allowedHosts ?? []),
+    ...allowedInternalHosts,
     ...secretEntries.flatMap((entry) => entry.hosts),
   ]);
 
@@ -147,17 +152,21 @@ export function createHttpHooks(
       return true;
     },
     isIpAllowed: async (info) => {
-      if (blockInternalRanges && isInternalAddress(info.ip)) {
+      const hostnameAllowedByHostList =
+        allowedHosts.length === 0 ||
+        matchesAnyHost(info.hostname, allowedHosts);
+      if (!hostnameAllowedByHostList) {
         return false;
       }
 
-      // We only use the hostname for allowlist checks.
       if (
-        allowedHosts.length > 0 &&
-        !matchesAnyHost(info.hostname, allowedHosts)
+        blockInternalRanges &&
+        isInternalAddress(info.ip) &&
+        !matchesAnyHost(info.hostname, allowedInternalHosts)
       ) {
         return false;
       }
+
       if (options.isIpAllowed) {
         return options.isIpAllowed(info);
       }

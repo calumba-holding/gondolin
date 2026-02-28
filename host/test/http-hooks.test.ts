@@ -205,6 +205,110 @@ test("http hooks block internal ranges by default", async () => {
   );
 });
 
+test("http hooks allowedInternalHosts can bypass internal range block", async () => {
+  const { httpHooks, allowedHosts } = createHttpHooks({
+    allowedInternalHosts: ["corp.example"],
+  });
+
+  assert.deepEqual(allowedHosts, ["corp.example"]);
+
+  const isAllowed = httpHooks.isIpAllowed!;
+
+  assert.equal(
+    await isAllowed({
+      hostname: "corp.example",
+      ip: "10.0.0.1",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    true,
+  );
+
+  assert.equal(
+    await isAllowed({
+      hostname: "corp.example",
+      ip: "203.0.113.10",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    true,
+  );
+
+  assert.equal(
+    await isAllowed({
+      hostname: "other.example",
+      ip: "10.0.0.1",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    false,
+  );
+});
+
+test("http hooks allowedInternalHosts only bypasses internal checks for matching hosts", async () => {
+  const { httpHooks } = createHttpHooks({
+    allowedHosts: ["*"],
+    allowedInternalHosts: ["corp.example"],
+  });
+
+  const isAllowed = httpHooks.isIpAllowed!;
+
+  assert.equal(
+    await isAllowed({
+      hostname: "corp.example",
+      ip: "10.1.2.3",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    true,
+  );
+
+  assert.equal(
+    await isAllowed({
+      hostname: "anything.example",
+      ip: "10.1.2.3",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    false,
+  );
+});
+
+test("http hooks allowedInternalHosts supports IPv4-style wildcard host patterns", async () => {
+  const { httpHooks } = createHttpHooks({
+    allowedInternalHosts: ["192.168.99.*"],
+  });
+
+  const isAllowed = httpHooks.isIpAllowed!;
+
+  assert.equal(
+    await isAllowed({
+      hostname: "192.168.99.10",
+      ip: "192.168.99.10",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    true,
+  );
+
+  assert.equal(
+    await isAllowed({
+      hostname: "192.168.100.10",
+      ip: "192.168.100.10",
+      family: 4,
+      port: 443,
+      protocol: "https",
+    }),
+    false,
+  );
+});
+
 test("http hooks block internal IPv6 ranges (loopback, ULA, link-local)", async () => {
   const { httpHooks } = createHttpHooks({
     allowedHosts: ["example.com"],

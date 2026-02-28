@@ -18,6 +18,7 @@ import { createHttpHooks } from "@earendil-works/gondolin";
 
 const { httpHooks, env } = createHttpHooks({
   allowedHosts: ["api.example.com", "*.github.com"],
+  allowedInternalHosts: ["litellm.corp.example"],
   secrets: {
     API_KEY: { hosts: ["api.example.com"], value: process.env.API_KEY! },
   },
@@ -35,6 +36,8 @@ const { httpHooks, env } = createHttpHooks({
 });
 ```
 
+`allowedInternalHosts` uses the same wildcard pattern syntax as `allowedHosts`, but only relaxes the internal-IP block for matching hostnames. Hosts listed there are treated as allowed hosts even if not repeated in `allowedHosts`.
+
 Egress hook behavior:
 
 - `onRequest(request)` receives a WHATWG `Request`
@@ -49,7 +52,8 @@ Important note: secrets may be expanded before `onRequest` is invoked. This
 means request-hook logging may include secrets.
 
 Short-circuited responses skip upstream fetch (including DNS/IP policy checks)
-and do not call `onResponse`.
+and do not call `onResponse`. If `onRequest` performs its own host-side `fetch()`
+and returns that `Response`, that fetch is outside Gondolin's VM egress policy.
 
 To make body-aware decisions, read from a clone and keep forwarding:
 
