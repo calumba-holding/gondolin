@@ -103,7 +103,7 @@ export interface TarEntry {
   size: number;
   /** link target name */
   linkName: string;
-  /** file contents (null for non-files) */
+  /** file contents (`null` for non-files, empty buffer for zero-byte files) */
   content: Buffer | null;
 }
 

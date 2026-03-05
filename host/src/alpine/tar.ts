@@ -110,6 +110,10 @@ export function parseTar(buf: Buffer): TarEntry[] {
               ? 1 // hardlink
               : typeFlag;
 
+    if (type === 0 && content === null) {
+      content = Buffer.alloc(0);
+    }
+
     entries.push({ name: fullName, type, mode, size, linkName, content });
 
     nextPaxHeaders = null;

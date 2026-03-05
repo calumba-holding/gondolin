@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { parseTar } from "../src/alpine/tar.ts";
+import { extractEntries, parseTar } from "../src/alpine/tar.ts";
 
 interface TarBuildEntry {
   /** entry name stored in the tar header */
@@ -67,6 +70,33 @@ test("parseTar applies GNU longname records", () => {
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.name, longPath);
   assert.equal(entries[0]?.content?.toString("utf8"), "ok");
+});
+
+test("extractEntries preserves zero-byte regular files", () => {
+  const tar = buildTar([
+    {
+      name: "usr/include/bits/limits.h",
+      type: "0",
+      body: Buffer.alloc(0),
+    },
+  ]);
+
+  const entries = parseTar(tar);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.type, 0);
+  assert.ok(entries[0]?.content);
+  assert.equal(entries[0]?.content?.length, 0);
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-tar-"));
+  try {
+    extractEntries(entries, tmpDir);
+
+    const extractedPath = path.join(tmpDir, "usr/include/bits/limits.h");
+    const stat = fs.statSync(extractedPath);
+    assert.equal(stat.size, 0);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });
 
 function buildPaxRecord(key: string, value: string): string {
