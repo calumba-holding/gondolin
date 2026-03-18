@@ -1,9 +1,11 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
 import { execFileSync } from "child_process";
 
 import { parseEnvEntry } from "../utils/env.ts";
 import { assertSafeWritePath } from "./rootfs.ts";
+import type { RootfsOwnershipEntry } from "./types.ts";
 
 export class DownloadFileError extends Error {
   /** requested download URL */
@@ -174,6 +176,7 @@ export function createRootfsImage(
   sourceDir: string,
   label: string,
   fixedSizeMb?: number,
+  ownershipEntries: RootfsOwnershipEntry[] = [],
 ): void {
   let sizeMb: number;
 
@@ -208,6 +211,151 @@ export function createRootfsImage(
     ],
     { stdio: "pipe" },
   );
+
+  applyOwnershipMetadataToRootfsImage(
+    mkfsCmd,
+    imagePath,
+    sourceDir,
+    ownershipEntries,
+  );
+}
+
+function applyOwnershipMetadataToRootfsImage(
+  mkfsCmd: string,
+  imagePath: string,
+  sourceDir: string,
+  ownershipEntries: RootfsOwnershipEntry[],
+): void {
+  if (ownershipEntries.length === 0) {
+    return;
+  }
+
+  if (typeof process.getuid === "function" && process.getuid() === 0) {
+    return;
+  }
+
+  const debugfs = findDebugfs(mkfsCmd);
+  if (!debugfs) {
+    throw new Error(
+      "OCI rootfs ownership restoration requires debugfs (install e2fsprogs, and on Alpine add e2fsprogs-extra)",
+    );
+  }
+
+  const commands: string[] = [];
+  for (const entry of ownershipEntries) {
+    const hostPath = path.join(sourceDir, ...entry.path.split("/"));
+    let st: fs.Stats;
+    try {
+      st = fs.lstatSync(hostPath);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "ENOENT" || e.code === "ENOTDIR") {
+        continue;
+      }
+      throw new Error(
+        `Failed to inspect extracted OCI rootfs path '${entry.path}' before ownership fixup: ${e.message}`,
+      );
+    }
+
+    if (st.uid === entry.uid && st.gid === entry.gid) {
+      continue;
+    }
+
+    const imageEntryPath = `/${entry.path}`;
+    const quotedPath = quoteDebugfsPath(imageEntryPath);
+    commands.push(`sif ${quotedPath} uid ${entry.uid}`);
+    commands.push(`sif ${quotedPath} gid ${entry.gid}`);
+  }
+
+  if (commands.length === 0) {
+    return;
+  }
+
+  const cmdFile = path.join(
+    fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-debugfs-")),
+    "commands.txt",
+  );
+
+  try {
+    fs.writeFileSync(cmdFile, `${commands.join("\n")}\n`);
+    execFileSync(debugfs, ["-w", "-f", cmdFile, imagePath], {
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    });
+  } catch (err) {
+    const e = err as {
+      code?: unknown;
+      status?: unknown;
+      stdout?: unknown;
+      stderr?: unknown;
+    };
+
+    if (e.code === "ENOENT") {
+      throw new Error(
+        "OCI rootfs ownership restoration requires debugfs (install e2fsprogs, and on Alpine add e2fsprogs-extra)",
+      );
+    }
+
+    const stdout =
+      typeof e.stdout === "string"
+        ? e.stdout
+        : Buffer.isBuffer(e.stdout)
+          ? e.stdout.toString("utf8")
+          : "";
+    const stderr =
+      typeof e.stderr === "string"
+        ? e.stderr
+        : Buffer.isBuffer(e.stderr)
+          ? e.stderr.toString("utf8")
+          : "";
+
+    throw new Error(
+      `Failed to apply OCI rootfs ownership metadata with debugfs (exit ${String(e.status ?? "?")}):\n` +
+        (stdout || stderr ? `${stdout}${stderr}` : ""),
+    );
+  } finally {
+    fs.rmSync(path.dirname(cmdFile), { recursive: true, force: true });
+  }
+}
+
+function findDebugfs(mkfsCmd: string): string | null {
+  const candidates: string[] = [];
+
+  if (path.isAbsolute(mkfsCmd)) {
+    candidates.push(path.join(path.dirname(mkfsCmd), "debugfs"));
+  }
+
+  candidates.push("debugfs");
+
+  if (process.platform === "darwin") {
+    candidates.push(
+      "/opt/homebrew/opt/e2fsprogs/sbin/debugfs",
+      "/opt/homebrew/opt/e2fsprogs/bin/debugfs",
+      "/usr/local/opt/e2fsprogs/sbin/debugfs",
+      "/usr/local/opt/e2fsprogs/bin/debugfs",
+    );
+  }
+
+  for (const candidate of candidates) {
+    try {
+      execFileSync(candidate, ["-V"], { stdio: "ignore" });
+      return candidate;
+    } catch {
+      // continue
+    }
+  }
+
+  return null;
+}
+
+function quoteDebugfsPath(pathSpec: string): string {
+  if (/[\x00-\x1f\x7f]/.test(pathSpec)) {
+    throw new Error(
+      `OCI rootfs ownership path contains unsupported control characters: ${JSON.stringify(pathSpec)}`,
+    );
+  }
+  return `"${pathSpec.replace(/([\\"])/g, "\\$1")}"`;
 }
 
 /** Create a compressed initramfs from a directory tree */

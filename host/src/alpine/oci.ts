@@ -7,7 +7,11 @@ import type {
   ContainerRuntime,
   OciPullPolicy,
 } from "../build/config.ts";
-import type { OciResolvedSource, OciRootfsOptions } from "./types.ts";
+import type {
+  OciResolvedSource,
+  OciRootfsOptions,
+  RootfsOwnershipEntry,
+} from "./types.ts";
 
 interface OciExportOptions extends OciRootfsOptions {
   /** target architecture */
@@ -18,6 +22,8 @@ interface OciExportOptions extends OciRootfsOptions {
   targetDir: string;
   /** log sink */
   log: (msg: string) => void;
+  /** callback for tar ownership metadata */
+  ownershipSink?: (entries: RootfsOwnershipEntry[]) => void;
 }
 
 interface OciResolvedDigest {
@@ -60,6 +66,8 @@ export function exportOciRootfs(opts: OciExportOptions): OciResolvedSource {
 
   try {
     runContainerCommand(runtime, ["export", containerId, "-o", exportTar]);
+    const ownershipEntries = readTarOwnershipEntries(exportTar);
+    opts.ownershipSink?.(ownershipEntries);
     extractTarFile(exportTar, opts.targetDir);
   } finally {
     try {
@@ -424,6 +432,285 @@ function commandOutputToString(value: unknown): string {
   return "";
 }
 
+const TAR_BLOCK_SIZE = 512;
+const TAR_TYPE_PAX_LOCAL = 0x78;
+const TAR_TYPE_PAX_GLOBAL = 0x67;
+const TAR_TYPE_GNU_LONGNAME = 0x4c;
+const TAR_TYPE_GNU_LONGLINK = 0x4b;
+
+function readTarOwnershipEntries(tarPath: string): RootfsOwnershipEntry[] {
+  const entries = new Map<string, RootfsOwnershipEntry>();
+
+  const stat = fs.statSync(tarPath);
+  const fd = fs.openSync(tarPath, "r");
+
+  let globalPaxHeaders: Record<string, string> = {};
+  let nextPaxHeaders: Record<string, string> | null = null;
+  let nextLongName: string | null = null;
+
+  try {
+    let offset = 0;
+    while (offset + TAR_BLOCK_SIZE <= stat.size) {
+      const header = readExact(fd, offset, TAR_BLOCK_SIZE);
+      if (header.every((byte) => byte === 0)) {
+        break;
+      }
+
+      const name = readTarString(header, 0, 100);
+      const uid = parseTarNumber(header.subarray(108, 116));
+      const gid = parseTarNumber(header.subarray(116, 124));
+      const size = parseTarNumber(header.subarray(124, 136));
+      const typeFlag = header[156] ?? 0;
+
+      let fullName = name;
+      const magic = readTarString(header, 257, 6);
+      if (magic === "ustar" || magic === "ustar\0") {
+        const prefix = readTarString(header, 345, 155);
+        if (prefix) {
+          fullName = `${prefix}/${name}`;
+        }
+      }
+
+      offset += TAR_BLOCK_SIZE;
+      const dataSize = Math.ceil(size / TAR_BLOCK_SIZE) * TAR_BLOCK_SIZE;
+
+      let content: Buffer | null = null;
+      if (size > 0) {
+        if (
+          typeFlag === TAR_TYPE_PAX_LOCAL ||
+          typeFlag === TAR_TYPE_PAX_GLOBAL ||
+          typeFlag === TAR_TYPE_GNU_LONGNAME ||
+          typeFlag === TAR_TYPE_GNU_LONGLINK
+        ) {
+          content = readExact(fd, offset, size);
+        }
+        offset += dataSize;
+      }
+
+      if (typeFlag === TAR_TYPE_PAX_LOCAL || typeFlag === TAR_TYPE_PAX_GLOBAL) {
+        const paxHeaders = parsePaxHeaders(content);
+        if (typeFlag === TAR_TYPE_PAX_GLOBAL) {
+          globalPaxHeaders = {
+            ...globalPaxHeaders,
+            ...paxHeaders,
+          };
+        } else {
+          nextPaxHeaders = paxHeaders;
+        }
+        continue;
+      }
+
+      if (typeFlag === TAR_TYPE_GNU_LONGNAME) {
+        nextLongName = readLongTarString(content);
+        continue;
+      }
+      if (typeFlag === TAR_TYPE_GNU_LONGLINK) {
+        continue;
+      }
+
+      const effectivePaxHeaders = nextPaxHeaders
+        ? { ...globalPaxHeaders, ...nextPaxHeaders }
+        : globalPaxHeaders;
+
+      if (nextLongName) {
+        fullName = nextLongName;
+      } else if (effectivePaxHeaders.path) {
+        fullName = effectivePaxHeaders.path;
+      }
+
+      let effectiveUid = uid;
+      const paxUid = parsePaxNumericHeader(effectivePaxHeaders.uid);
+      if (paxUid !== null) {
+        effectiveUid = paxUid;
+      }
+
+      let effectiveGid = gid;
+      const paxGid = parsePaxNumericHeader(effectivePaxHeaders.gid);
+      if (paxGid !== null) {
+        effectiveGid = paxGid;
+      }
+
+      const normalizedPath = normalizeTarPath(fullName);
+      if (normalizedPath) {
+        entries.set(normalizedPath, {
+          path: normalizedPath,
+          uid: effectiveUid,
+          gid: effectiveGid,
+        });
+      }
+
+      nextPaxHeaders = null;
+      nextLongName = null;
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+
+  return Array.from(entries.values());
+}
+
+function readExact(fd: number, offset: number, size: number): Buffer {
+  if (size === 0) {
+    return Buffer.alloc(0);
+  }
+
+  const buf = Buffer.alloc(size);
+  let done = 0;
+
+  while (done < size) {
+    const read = fs.readSync(fd, buf, done, size - done, offset + done);
+    if (read <= 0) {
+      throw new Error("Unexpected end of tar archive while reading header");
+    }
+    done += read;
+  }
+
+  return buf;
+}
+
+function readTarString(buf: Buffer, start: number, length: number): string {
+  const slice = buf.subarray(start, start + length);
+  const nul = slice.indexOf(0);
+  const end = nul === -1 ? slice.length : nul;
+  return slice.subarray(0, end).toString("utf8");
+}
+
+function readLongTarString(content: Buffer | null): string {
+  if (!content || content.length === 0) {
+    return "";
+  }
+
+  let end = content.length;
+  while (end > 0 && (content[end - 1] === 0 || content[end - 1] === 0x0a)) {
+    end -= 1;
+  }
+  return content.subarray(0, end).toString("utf8");
+}
+
+function parsePaxHeaders(content: Buffer | null): Record<string, string> {
+  if (!content || content.length === 0) {
+    return {};
+  }
+
+  const out: Record<string, string> = {};
+  let offset = 0;
+
+  while (offset < content.length) {
+    const spaceIdx = content.indexOf(0x20, offset);
+    if (spaceIdx === -1) {
+      break;
+    }
+
+    const lenStr = content.subarray(offset, spaceIdx).toString("utf8").trim();
+    const recordLen = Number.parseInt(lenStr, 10);
+    if (!Number.isFinite(recordLen) || recordLen <= 0) {
+      break;
+    }
+
+    const recordEnd = offset + recordLen;
+    if (recordEnd > content.length) {
+      break;
+    }
+
+    const record = content.subarray(spaceIdx + 1, recordEnd).toString("utf8");
+    const normalized = record.endsWith("\n") ? record.slice(0, -1) : record;
+    const eqIdx = normalized.indexOf("=");
+    if (eqIdx !== -1) {
+      const key = normalized.slice(0, eqIdx);
+      const value = normalized.slice(eqIdx + 1);
+      if (key) {
+        out[key] = value;
+      }
+    }
+
+    offset = recordEnd;
+  }
+
+  return out;
+}
+
+function parsePaxNumericHeader(value: string | undefined): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return null;
+  }
+  return parsed;
+}
+
+function parseTarNumber(field: Buffer): number {
+  if (field.length === 0) {
+    return 0;
+  }
+
+  // GNU base-256 encoding (high bit set on first byte)
+  if ((field[0]! & 0x80) !== 0) {
+    let value = BigInt(field[0]! & 0x7f);
+    for (let idx = 1; idx < field.length; idx += 1) {
+      value = (value << 8n) | BigInt(field[idx]!);
+    }
+    if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("tar numeric field exceeds JavaScript safe integer range");
+    }
+    return Number(value);
+  }
+
+  const text = field
+    .toString("utf8")
+    .replace(/\0.*$/, "")
+    .trim();
+  if (!text) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(text, 8);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return 0;
+  }
+  return parsed;
+}
+
+function normalizeTarPath(value: string): string | null {
+  if (containsControlCharacter(value)) {
+    return null;
+  }
+
+  let pathValue = value.replace(/\\/g, "/");
+
+  while (pathValue.startsWith("./")) {
+    pathValue = pathValue.slice(2);
+  }
+
+  if (pathValue.startsWith("/")) {
+    pathValue = pathValue.slice(1);
+  }
+
+  if (!pathValue || pathValue === ".") {
+    return null;
+  }
+
+  pathValue = path.posix.normalize(pathValue);
+  if (!pathValue || pathValue === "." || pathValue === "..") {
+    return null;
+  }
+  if (pathValue.startsWith("../")) {
+    return null;
+  }
+
+  if (pathValue.endsWith("/")) {
+    pathValue = pathValue.slice(0, -1);
+  }
+
+  return pathValue || null;
+}
+
+function containsControlCharacter(value: string): boolean {
+  return /[\x00-\x1f\x7f]/.test(value);
+}
+
 function extractTarFile(tarPath: string, destDir: string): void {
   try {
     execFileSync("tar", ["-xf", tarPath, "-C", destDir], {
@@ -454,3 +741,7 @@ function extractTarFile(tarPath: string, destDir: string): void {
     );
   }
 }
+
+export const __test = {
+  readTarOwnershipEntries,
+};

@@ -5,13 +5,92 @@ import path from "path";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildOciCreateArgs, exportOciRootfs } from "../src/alpine/oci.ts";
+import {
+  __test as ociTest,
+  buildOciCreateArgs,
+  exportOciRootfs,
+} from "../src/alpine/oci.ts";
 import {
   assertSafeWritePath,
   ensureRootfsShell,
   hardenExtractedRootfs,
 } from "../src/alpine/rootfs.ts";
 import { syncKernelModules } from "../src/alpine/kernel-modules.ts";
+
+interface TarFixtureEntry {
+  /** tar entry path */
+  name: string;
+  /** tar entry type flag */
+  type: "0" | "5";
+  /** tar entry owner uid */
+  uid: number;
+  /** tar entry owner gid */
+  gid: number;
+  /** file payload */
+  content?: string;
+}
+
+function createTarArchive(entries: TarFixtureEntry[]): Buffer {
+  const blocks: Buffer[] = [];
+
+  for (const entry of entries) {
+    const payload = Buffer.from(entry.content ?? "", "utf8");
+    const size = entry.type === "0" ? payload.length : 0;
+    const header = Buffer.alloc(512, 0);
+
+    writeTarString(header, 0, 100, entry.name);
+    writeTarOctal(header, 100, 8, entry.type === "5" ? 0o755 : 0o644);
+    writeTarOctal(header, 108, 8, entry.uid);
+    writeTarOctal(header, 116, 8, entry.gid);
+    writeTarOctal(header, 124, 12, size);
+    writeTarOctal(header, 136, 12, 0);
+    header[156] = entry.type.charCodeAt(0);
+    writeTarString(header, 257, 6, "ustar");
+    writeTarString(header, 263, 2, "00");
+
+    for (let idx = 148; idx < 156; idx += 1) {
+      header[idx] = 0x20;
+    }
+    let checksum = 0;
+    for (const byte of header) {
+      checksum += byte;
+    }
+    const checksumField = `${checksum.toString(8).padStart(6, "0")}\0 `;
+    writeTarString(header, 148, 8, checksumField);
+
+    blocks.push(header);
+    if (size > 0) {
+      blocks.push(payload);
+      const pad = (512 - (size % 512)) % 512;
+      if (pad > 0) {
+        blocks.push(Buffer.alloc(pad, 0));
+      }
+    }
+  }
+
+  blocks.push(Buffer.alloc(1024, 0));
+  return Buffer.concat(blocks);
+}
+
+function writeTarString(
+  header: Buffer,
+  offset: number,
+  length: number,
+  value: string,
+): void {
+  const encoded = Buffer.from(value, "utf8");
+  encoded.copy(header, offset, 0, Math.min(encoded.length, length));
+}
+
+function writeTarOctal(
+  header: Buffer,
+  offset: number,
+  length: number,
+  value: number,
+): void {
+  const encoded = `${value.toString(8).padStart(length - 1, "0")}\0`;
+  writeTarString(header, offset, length, encoded);
+}
 
 function writeCreateFailRuntime(binDir: string): void {
   const runtimePath = path.join(binDir, "docker");
@@ -123,6 +202,55 @@ test("oci rootfs: buildOciCreateArgs includes dummy command", () => {
     "docker.io/library/debian:bookworm-slim",
     "true",
   ]);
+});
+
+test("oci rootfs: tar ownership parser preserves uid/gid metadata", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-oci-tar-owners-"));
+  const tarPath = path.join(tmp, "rootfs.tar");
+
+  try {
+    const archive = createTarArchive([
+      {
+        name: "etc/",
+        type: "5",
+        uid: 0,
+        gid: 0,
+      },
+      {
+        name: "home/myuser/",
+        type: "5",
+        uid: 1001,
+        gid: 1001,
+      },
+      {
+        name: "home/myuser/.profile",
+        type: "0",
+        uid: 1001,
+        gid: 1001,
+        content: "export PATH=/usr/bin\n",
+      },
+      {
+        name: "home/bad\npath",
+        type: "0",
+        uid: 1337,
+        gid: 1337,
+        content: "ignored\n",
+      },
+    ]);
+
+    fs.writeFileSync(tarPath, archive);
+
+    const ownership = ociTest.readTarOwnershipEntries(tarPath);
+    ownership.sort((a, b) => a.path.localeCompare(b.path));
+
+    assert.deepEqual(ownership, [
+      { path: "etc", uid: 0, gid: 0 },
+      { path: "home/myuser", uid: 1001, gid: 1001 },
+      { path: "home/myuser/.profile", uid: 1001, gid: 1001 },
+    ]);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("oci rootfs: pullPolicy always tolerates large pull output", () => {

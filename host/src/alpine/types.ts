@@ -91,6 +91,16 @@ export interface AlpineBuildResult {
   ociSource?: OciResolvedSource;
 }
 
+/** filesystem ownership metadata for a rootfs path */
+export interface RootfsOwnershipEntry {
+  /** rootfs-relative path (without leading slash) */
+  path: string;
+  /** owning user id */
+  uid: number;
+  /** owning group id */
+  gid: number;
+}
+
 /** a single entry parsed from a tar archive */
 export interface TarEntry {
   /** entry name */

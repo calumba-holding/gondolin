@@ -33,12 +33,14 @@ import type {
   AlpineBuildOptions,
   AlpineBuildResult,
   OciResolvedSource,
+  RootfsOwnershipEntry,
 } from "../alpine/types.ts";
 
 export type {
   AlpineBuildOptions,
   AlpineBuildResult,
   OciResolvedSource,
+  RootfsOwnershipEntry,
 } from "../alpine/types.ts";
 
 /** Build Alpine rootfs and initramfs images */
@@ -91,6 +93,7 @@ export async function buildAlpineImages(
   fs.mkdirSync(initramfsDir, { recursive: true });
 
   let ociSource: OciResolvedSource | undefined;
+  let ociOwnershipEntries: RootfsOwnershipEntry[] = [];
 
   if (opts.ociRootfs) {
     const runtimeLabel = opts.ociRootfs.runtime ?? "auto-detect";
@@ -102,6 +105,9 @@ export async function buildAlpineImages(
       workDir,
       targetDir: rootfsDir,
       log,
+      ownershipSink: (entries) => {
+        ociOwnershipEntries = entries;
+      },
       ...opts.ociRootfs,
     });
     hardenExtractedRootfs(rootfsDir);
@@ -203,7 +209,14 @@ export async function buildAlpineImages(
   fs.rmSync(path.join(rootfsDir, "boot"), { recursive: true, force: true });
 
   log("Creating rootfs ext4 image...");
-  createRootfsImage(mkfsCmd, rootfsImage, rootfsDir, rootfsLabel, rootfsSizeMb);
+  createRootfsImage(
+    mkfsCmd,
+    rootfsImage,
+    rootfsDir,
+    rootfsLabel,
+    rootfsSizeMb,
+    ociOwnershipEntries,
+  );
 
   log("Creating initramfs...");
   createInitramfs(initramfsDir, initramfsOut);

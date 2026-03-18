@@ -61,7 +61,7 @@ Building custom images requires the following tools:
 | **Zig 0.15.2** | Cross-compiling sandboxd/sandboxfs binaries |
 | **cpio** | Creating initramfs archives |
 | **lz4** | Initramfs compression |
-| **e2fsprogs** | Creating ext4 rootfs images (mke2fs) |
+| **e2fsprogs** | Creating/extending ext4 rootfs images (mke2fs, debugfs) |
 | **Docker or Podman** *(optional)* | Pull/export OCI rootfs images (`oci.image`) |
 
 ### macOS
@@ -77,6 +77,8 @@ The build tries to locate `mke2fs` automatically (including common Homebrew loca
 ```bash
 # Install Zig 0.15.2 from https://ziglang.org/download/
 sudo apt install lz4 cpio e2fsprogs
+
+# OCI rootfs ownership fixups may also need debugfs (Ubuntu/Debian include it in e2fsprogs)
 ```
 
 ## Configuration Reference
@@ -373,6 +375,14 @@ Install e2fsprogs:
 - Linux: `sudo apt install e2fsprogs`
 
 On macOS, ensure `mke2fs` is on your `PATH` (use `brew --prefix e2fsprogs` to find where it was installed).
+
+### `debugfs`: Command Not Found (OCI builds)
+
+OCI rootfs builds run a post-processing pass to preserve tar UID/GID ownership metadata.
+That pass needs `debugfs` from e2fsprogs.
+
+- Debian/Ubuntu: included in `e2fsprogs`
+- Alpine host: install `e2fsprogs-extra`
 
 ### `Could not find guest directory for Zig build`
 
