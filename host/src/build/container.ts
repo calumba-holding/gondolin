@@ -267,7 +267,14 @@ node /work/run-build.mjs
 
   const manifestPath = path.join(outputDir, MANIFEST_FILENAME);
 
-  fs.rmSync(workDir, { recursive: true, force: true });
+  try {
+    fs.rmSync(workDir, { recursive: true, force: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    log(
+      `Warning: could not remove temporary container build dir ${workDir}: ${message}`,
+    );
+  }
 
   log(`Build complete! Assets written to ${outputDir}`);
 
