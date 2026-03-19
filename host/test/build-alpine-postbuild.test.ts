@@ -151,3 +151,63 @@ test("postBuild: unmounts procfs even when a command fails", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("postBuild: accepts /bin/sh absolute symlinks inside rootfs", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-postbuild-"));
+  const rootfsDir = path.join(tmp, "rootfs");
+  const binDir = path.join(tmp, "bin");
+  const callLog = path.join(tmp, "calls.log");
+
+  fs.mkdirSync(path.join(rootfsDir, "bin"), { recursive: true });
+  fs.mkdirSync(binDir, { recursive: true });
+  fs.writeFileSync(path.join(rootfsDir, "bin", "busybox"), "busybox", {
+    mode: 0o755,
+  });
+  fs.symlinkSync("/bin/busybox", path.join(rootfsDir, "bin", "sh"));
+
+  writeStubCommand(binDir, "mount", 'printf "mount %s\\n" "$*" >> "$CALL_LOG"');
+  writeStubCommand(
+    binDir,
+    "chroot",
+    'printf "chroot %s\\n" "$*" >> "$CALL_LOG"',
+  );
+  writeStubCommand(
+    binDir,
+    "umount",
+    'printf "umount %s\\n" "$*" >> "$CALL_LOG"',
+  );
+
+  const oldPath = process.env.PATH;
+  const oldCallLog = process.env.CALL_LOG;
+  const oldGetuid = process.getuid;
+  const oldPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+
+  try {
+    process.env.PATH = `${binDir}:${oldPath ?? ""}`;
+    process.env.CALL_LOG = callLog;
+    process.getuid = () => 0;
+    Object.defineProperty(process, "platform", { value: "linux" });
+
+    runPostBuildCommands(rootfsDir, ["echo shell"], runtimeArch(), () => {});
+
+    const lines = fs
+      .readFileSync(callLog, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+
+    assert.equal(lines.length, 3);
+    assert.equal(
+      lines[1],
+      `chroot ${path.resolve(rootfsDir)} /bin/sh -lc echo shell`,
+    );
+  } finally {
+    process.env.PATH = oldPath;
+    process.env.CALL_LOG = oldCallLog;
+    process.getuid = oldGetuid;
+    if (oldPlatform) {
+      Object.defineProperty(process, "platform", oldPlatform);
+    }
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

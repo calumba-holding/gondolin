@@ -5,6 +5,7 @@ import { execFileSync } from "child_process";
 import type { Architecture } from "../build/config.ts";
 import { downloadFile } from "./utils.ts";
 import { decompressTarGz, extractEntries, parseTar } from "./tar.ts";
+import { pathEntryExists } from "./rootfs.ts";
 import type { ApkMeta } from "./types.ts";
 
 /** Parse an APKINDEX file into package metadata records */
@@ -173,7 +174,7 @@ export function runPostBuildCommands(
 
   const root = path.resolve(rootfsDir);
   const shellPath = path.join(root, "bin/sh");
-  if (!fs.existsSync(shellPath)) {
+  if (!pathEntryExists(shellPath)) {
     throw new Error(`postBuild.commands requires ${shellPath}`);
   }
 
@@ -239,7 +240,7 @@ function detectRuntimeArch(): Architecture {
 
 function ensureResolvConf(rootfsDir: string): () => void {
   const rootfsResolv = path.join(rootfsDir, "etc/resolv.conf");
-  if (fs.existsSync(rootfsResolv)) {
+  if (pathEntryExists(rootfsResolv)) {
     return () => {};
   }
 

@@ -449,3 +449,20 @@ test("oci rootfs: ensureRootfsShell bootstraps busybox from initramfs", () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+test("oci rootfs: ensureRootfsShell accepts absolute /bin/sh symlink", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "gondolin-oci-shell-"));
+  const rootfsDir = path.join(tmp, "rootfs");
+
+  fs.mkdirSync(path.join(rootfsDir, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(rootfsDir, "bin", "busybox"), "busybox");
+  fs.symlinkSync("/bin/busybox", path.join(rootfsDir, "bin", "sh"));
+
+  try {
+    assert.doesNotThrow(() => {
+      ensureRootfsShell(rootfsDir, "alpine:3.23", undefined, () => {});
+    });
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

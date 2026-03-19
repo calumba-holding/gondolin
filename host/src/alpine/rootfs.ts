@@ -20,6 +20,19 @@ export function hasSymlinkComponent(target: string, root: string): boolean {
   return false;
 }
 
+/** Check whether a path entry exists without following the final symlink */
+export function pathEntryExists(targetPath: string): boolean {
+  try {
+    fs.lstatSync(targetPath);
+    return true;
+  } catch (err: any) {
+    if (err?.code === "ENOENT" || err?.code === "ENOTDIR") {
+      return false;
+    }
+    throw err;
+  }
+}
+
 function isPathInsideRoot(target: string, root: string): boolean {
   const absTarget = path.resolve(target);
   const absRoot = path.resolve(root);
@@ -158,12 +171,12 @@ export function ensureRootfsShell(
   log?: (msg: string) => void,
 ): void {
   const shellPath = path.join(rootfsDir, "bin/sh");
-  if (fs.existsSync(shellPath)) {
+  if (pathEntryExists(shellPath)) {
     return;
   }
 
   if (initramfsDir && bootstrapBusyboxShell(rootfsDir, initramfsDir, log)) {
-    if (fs.existsSync(shellPath)) {
+    if (pathEntryExists(shellPath)) {
       return;
     }
   }

@@ -76,6 +76,14 @@ if (args[0] === "run") {
     process.stderr.write("docker stub: build script does not run the node builder\\n");
     process.exit(3);
   }
+  if (!buildScript.includes("export ZIG_LOCAL_CACHE_DIR=/work/zig-cache/local")) {
+    process.stderr.write("docker stub: build script does not configure ZIG_LOCAL_CACHE_DIR\\n");
+    process.exit(6);
+  }
+  if (!buildScript.includes("export ZIG_GLOBAL_CACHE_DIR=/work/zig-cache/global")) {
+    process.stderr.write("docker stub: build script does not configure ZIG_GLOBAL_CACHE_DIR\\n");
+    process.exit(7);
+  }
   if (!fs.existsSync(runnerPath)) {
     process.stderr.write("docker stub: missing /work/run-build.mjs\\n");
     process.exit(4);
