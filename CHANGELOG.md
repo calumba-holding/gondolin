@@ -4,6 +4,14 @@ All notable changes to Gondolin are documented here.
 
 ## Unreleased
 
+- Add experimental `krun` backend support (`--vmm krun` / `sandbox.vmm = "krun"`) with packaged runner binaries and krun boot assets in build manifests #70
+- Add `postBuild.copy` for custom image builds, allowing host files/directories to be copied into the guest rootfs before `postBuild.commands`
+- Improve custom image build reliability by preserving APK PAX long-path entries and zero-byte files during extraction
+- Preserve OCI image UID/GID ownership metadata when assembling ext4 rootfs images from OCI sources
+- Fix `postBuild.commands` shell detection for rootfs images where `/bin/sh` is an absolute symlink (for example Alpine minirootfs)
+- Fix forced container builds (`container.force`) under rootless runtimes by moving Zig caches to writable in-container paths
+- Improve guest source discovery for packaged installs so `gondolin build` works without requiring a separate local checkout in common cases
+- Improve TCP/HTTP bridge stability under backpressure and disconnects to prevent stalled or poisoned pooled connections #71
 - Normalize host filesystem RPC error propagation to canonical Linux errno values so guests receive consistent errors across macOS and Linux hosts
 
 ## 0.6.0
